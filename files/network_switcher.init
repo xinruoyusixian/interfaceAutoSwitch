@@ -1,5 +1,4 @@
 #!/bin/sh /etc/rc.common
-# files/network_switcher.init
 
 START=99
 STOP=10
