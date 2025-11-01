@@ -11,13 +11,13 @@ function index()
     entry({"admin", "services", "network_switcher", "settings"}, cbi("network_switcher/network_switcher"), "设置", 2)
     entry({"admin", "services", "network_switcher", "log"}, template("network_switcher/log"), "日志", 3)
     
-    entry({"admin", "services", "network_switcher", "status"}, call("action_status"))
-    entry({"admin", "services", "network_switcher", "switch"}, call("action_switch"))
-    entry({"admin", "services", "network_switcher", "test"}, call("action_test"))
-    entry({"admin", "services", "network_switcher", "get_log"}, call("action_get_log"))
-    entry({"admin", "services", "network_switcher", "service_control"}, call("action_service_control"))
-    entry({"admin", "services", "network_switcher", "clear_log"}, call("action_clear_log"))
-    entry({"admin", "services", "network_switcher", "get_configured_interfaces"}, call("action_get_configured_interfaces"))
+    entry({"admin", "services", "network_switcher", "status"}, call("action_status")).leaf = true
+    entry({"admin", "services", "network_switcher", "switch"}, call("action_switch")).leaf = true
+    entry({"admin", "services", "network_switcher", "test"}, call("action_test")).leaf = true
+    entry({"admin", "services", "network_switcher", "get_log"}, call("action_get_log")).leaf = true
+    entry({"admin", "services", "network_switcher", "service_control"}, call("action_service_control")).leaf = true
+    entry({"admin", "services", "network_switcher", "clear_log"}, call("action_clear_log")).leaf = true
+    entry({"admin", "services", "network_switcher", "get_configured_interfaces"}, call("action_get_configured_interfaces")).leaf = true
 end
 
 function action_status()
@@ -87,7 +87,7 @@ function action_get_log()
     
     local log_content = "日志文件为空"
     if nixio.fs.access("/var/log/network_switcher.log") then
-        log_content = sys.exec("cat /var/log/network_switcher.log 2>/dev/null | tail -100")
+        log_content = sys.exec("tail -50 /var/log/network_switcher.log 2>/dev/null")
     end
     
     lucihttp.prepare_content("text/plain")
