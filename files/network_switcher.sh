@@ -384,6 +384,12 @@ test_network_connectivity() {
 switch_interface() {
     local target_interface="$1"
     
+    if ! acquire_lock; then
+        echo "另一个实例正在运行，无法执行切换"
+        return 1
+    fi
+    trap release_lock RETURN
+
     echo "开始切换到: $target_interface"
     log "开始切换到: $target_interface" "SWITCH"
     
@@ -458,16 +464,10 @@ switch_interface() {
 }
 
 auto_switch() {
-    if ! acquire_lock_non_blocking; then
-        echo "另一个实例正在运行，无法执行自动切换"
-        return 1
-    fi
-    
     read_uci_config
     
     if [ "$ENABLED" != "1" ]; then
         echo "服务未启用"
-        release_lock
         return 0
     fi
     
@@ -479,12 +479,10 @@ auto_switch() {
             if [ "$current_device" != "$primary_device" ]; then
                 echo "主接口可用，切换到主接口: $PRIMARY_INTERFACE"
                 switch_interface "$PRIMARY_INTERFACE" && {
-                    release_lock
                     return 0
                 }
             else
                 echo "已经是主接口，无需切换"
-                release_lock
                 return 0
             fi
         else
@@ -501,12 +499,10 @@ auto_switch() {
                 if [ "$current_device" != "$target_device" ]; then
                     echo "备用接口可用，切换到: $interface"
                     switch_interface "$interface" && {
-                        release_lock
                         return 0
                     }
                 else
                     echo "已经是目标接口，无需切换"
-                    release_lock
                     return 0
                 fi
             else
@@ -517,7 +513,6 @@ auto_switch() {
     
     echo "所有接口都不可用"
     log "所有接口都不可用" "ERROR"
-    release_lock
     return 1
 }
 
@@ -677,18 +672,18 @@ check_schedule() {
 
 # 在 run_daemon 函数中添加定时任务检查
 run_daemon() {
-    log "启动守护进程" "SERVICE"
+    if ! acquire_lock_non_blocking; then
+        log "守护进程已在运行" "SERVICE"
+        exit 1
+    fi
     
     trap 'log "收到信号，退出守护进程" "SERVICE"; release_lock; exit 0' TERM INT
     
+    log "启动守护进程" "SERVICE"
+
     local last_schedule_check=0
     
     while true; do
-        if ! acquire_lock_non_blocking; then
-            sleep "$CHECK_INTERVAL"
-            continue
-        fi
-        
         read_uci_config
         
         if [ "$ENABLED" = "1" ] && [ $INTERFACE_COUNT -gt 0 ]; then
@@ -702,11 +697,9 @@ run_daemon() {
             auto_switch
         else
             log "服务已禁用或无接口配置，退出守护进程" "SERVICE"
-            release_lock
             break
         fi
         
-        release_lock
         sleep "$CHECK_INTERVAL"
     done
 }
@@ -726,11 +719,6 @@ main() {
             ;;
         switch)
             if [ -n "$2" ]; then
-                if ! acquire_lock; then
-                    echo "另一个实例正在运行，无法执行切换"
-                    exit 1
-                fi
-                trap release_lock EXIT
                 switch_interface "$2"
             else
                 echo "用法: $0 switch <接口名>"
