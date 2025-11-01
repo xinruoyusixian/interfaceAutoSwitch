@@ -348,7 +348,7 @@ function toggleAutoRefresh() {
         button.classList.remove('cbi-button-positive');
         isAutoRefreshing = false;
     } else {
-        autoRefreshInterval = setInterval(refreshLog, 2000);
+        autoRefreshInterval = setInterval(refreshLog, 1000);
         button.textContent = '自动刷新: 开';
         button.classList.add('cbi-button-positive');
         isAutoRefreshing = true;

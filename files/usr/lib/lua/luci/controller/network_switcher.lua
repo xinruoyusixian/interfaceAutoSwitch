@@ -9,7 +9,6 @@ function index()
     entry({"admin", "services", "network_switcher"}, firstchild(), "网络切换器", 60).dependent = false
     entry({"admin", "services", "network_switcher", "overview"}, template("network_switcher/overview"), "概览", 1)
     entry({"admin", "services", "network_switcher", "settings"}, cbi("network_switcher/network_switcher"), "设置", 2)
-    entry({"admin", "services", "network_switcher", "log"}, template("network_switcher/log"), "日志", 3)
     
     entry({"admin", "services", "network_switcher", "status"}, call("action_status")).leaf = true
     entry({"admin", "services", "network_switcher", "switch"}, call("action_switch")).leaf = true
@@ -55,9 +54,9 @@ function action_switch()
             command = "switch " .. interface
         end
         
-        local result = sys.exec("/usr/bin/network_switcher " .. command .. " 2>&1")
+        sys.exec("/usr/bin/network_switcher " .. command .. " >/dev/null 2>&1 &")
         response.success = true
-        response.message = result
+        response.message = "切换命令已在后台执行。"
     else
         response.success = false
         response.message = "无效的接口"
@@ -71,10 +70,10 @@ function action_test()
     local lucihttp = require("luci.http")
     local sys = require("luci.sys")
     
-    local result = sys.exec("/usr/bin/network_switcher test 2>&1")
+    sys.exec("/usr/bin/network_switcher test >/dev/null 2>&1 &")
     local response = {
         success = true,
-        output = result
+        output = "测试命令已在后台执行。"
     }
     
     lucihttp.prepare_content("application/json")
@@ -102,9 +101,9 @@ function action_service_control()
     local response = {}
     
     if action == "start" or action == "stop" or action == "restart" then
-        local result = sys.exec("/usr/bin/network_switcher " .. action .. " 2>&1")
+        sys.exec("/usr/bin/network_switcher " .. action .. " >/dev/null 2>&1 &")
         response.success = true
-        response.message = result
+        response.message = "服务命令 '" .. action .. "' 已在后台执行。"
     else
         response.success = false
         response.message = "无效的操作"
