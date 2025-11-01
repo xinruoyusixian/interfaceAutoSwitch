@@ -31,6 +31,12 @@ ping_timeout.datatype = "range(1,10)"
 ping_timeout.default = "3"
 ping_timeout.placeholder = "3"
 
+ping_success_count = s:option(Value, "ping_success_count", "Ping成功次数",
+    "需要多少个Ping目标成功才认为网络连通")
+ping_success_count.datatype = "range(1,10)"
+ping_success_count.default = "1"
+ping_success_count.placeholder = "1"
+
 switch_wait_time = s:option(Value, "switch_wait_time", "切换等待时间(秒)", 
     "切换后验证前的等待时间")
 switch_wait_time.datatype = "range(1,10)"
