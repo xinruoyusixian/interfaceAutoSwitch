@@ -127,9 +127,7 @@ jobs:
         # 创建zip包
         zip -r ${{ env.PACKAGE_NAME }}-${{ github.event.release.tag_name }}.zip release_packages/
 
-    - name: Upload IPKs to release
+    - name: Upload to release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          release_packages/*.ipk
-          release_packages/README.txt
+        files: ${{ env.PACKAGE_NAME }}-${{ github.event.release.tag_name }}.zip
