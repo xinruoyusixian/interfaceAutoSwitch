@@ -1,0 +1,68 @@
+<!-- files/usr/lib/lua/luci/view/network_switcher/log.htm -->
+<%+header%>
+
+<div class="cbi-map">
+    <h2 name="content">网络切换器日志</h2>
+    
+    <div class="cbi-map-descr">
+        查看网络切换器服务日志(仅记录重要操作)。
+    </div>
+    
+    <fieldset class="cbi-section">
+        <legend>服务日志</legend>
+        <div class="cbi-value">
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-reload" onclick="refreshLog()">
+                    刷新日志
+                </button>
+                <button class="cbi-button cbi-button-reset" onclick="clearLog()">
+                    清空日志
+                </button>
+            </div>
+        </div>
+        
+        <pre id="log-content" style="min-height: 500px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; overflow: auto; font-size: 12px;"></pre>
+    </fieldset>
+</div>
+
+<script>
+window.onload = function() {
+    refreshLog();
+};
+
+function refreshLog() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/get_log")%>', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            var logElement = document.getElementById('log-content');
+            logElement.textContent = xhr.responseText;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+    };
+    xhr.send();
+}
+
+function clearLog() {
+    if (confirm('确定要清空日志吗?')) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/clear_log")%>', true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) {
+                    var response = JSON.parse(xhr.responseText);
+                    alert(response.message);
+                    refreshLog();
+                } else {
+                    alert('清空日志失败');
+                }
+            }
+        };
+        xhr.send();
+    }
+}
+
+setInterval(refreshLog, 10000);
+</script>
+
+<%+footer%>
