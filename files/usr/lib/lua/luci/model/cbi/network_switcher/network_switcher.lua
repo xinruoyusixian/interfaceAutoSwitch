@@ -120,7 +120,7 @@ schedule_time.default = "08:00"
 schedule_time.placeholder = "08:00"
 
 function schedule_time.validate(self, value, section)
-    if not value:
+    if not value then
         return nil, "时间不能为空"
     end
     if not value:match("^([01][0-9]|2[0-3]):[0-5][0-9]$") then
