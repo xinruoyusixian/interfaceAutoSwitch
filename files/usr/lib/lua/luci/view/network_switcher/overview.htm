@@ -91,6 +91,7 @@
 <script type="text/javascript">
 var autoRefreshInterval = null;
 var isAutoRefreshing = false;
+var baseUrl = '<%=luci.dispatcher.build_url("admin", "services", "network_switcher")%>';
 
 document.addEventListener('DOMContentLoaded', function() {
     // 绑定事件
@@ -113,7 +114,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function loadInterfaces() {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/get_configured_interfaces', true);
+    xhr.open('GET', baseUrl + '/get_configured_interfaces', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
@@ -177,7 +178,7 @@ function updateInterfaceSelect(interfaces) {
 
 function refreshStatus() {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/status', true);
+    xhr.open('GET', baseUrl + '/status', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -222,7 +223,7 @@ function toggleService() {
     addLogMessage((enableCheckbox.checked ? "正在启动服务..." : "正在停止服务..."));
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/service_control?action=' + action, true);
+    xhr.open('GET', baseUrl + '/service_control?action=' + action, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
@@ -247,7 +248,7 @@ function restartService() {
     addLogMessage("正在重启服务...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/service_control?action=restart', true);
+    xhr.open('GET', baseUrl + '/service_control?action=restart', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -279,7 +280,7 @@ function switchInterface() {
     addLogMessage("正在切换到 " + interface + "...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/switch?interface=' + interface, true);
+    xhr.open('GET', baseUrl + '/switch?interface=' + interface, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -303,7 +304,7 @@ function autoSwitch() {
     addLogMessage("正在执行自动切换...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/switch?interface=auto', true);
+    xhr.open('GET', baseUrl + '/switch?interface=auto', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -323,7 +324,7 @@ function testConnectivity() {
     addLogMessage("正在测试网络...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/test', true);
+    xhr.open('GET', baseUrl + '/test', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -341,7 +342,7 @@ function testConnectivity() {
 
 function refreshLog() {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/services/network_switcher/get_log', true);
+    xhr.open('GET', baseUrl + '/get_log', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             var logElement = document.getElementById('log-content');
@@ -355,7 +356,7 @@ function refreshLog() {
 function clearLog() {
     if (confirm('确定要清空日志吗?')) {
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/admin/services/network_switcher/clear_log', true);
+        xhr.open('GET', baseUrl + '/clear_log', true);
         xhr.onreadystatechange = function() {
             if (xhr.readyState === 4) {
                 if (xhr.status === 200) {
