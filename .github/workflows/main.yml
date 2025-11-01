@@ -1,0 +1,135 @@
+name: Build OpenWrt Network Switcher Plugin
+
+on:
+  workflow_dispatch:
+
+env:
+  PACKAGE_NAME: network-switcher
+  PACKAGE_VERSION: "1.0.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86-64, aarch64_generic]
+        include:
+          - target: x86-64
+            sdk_url: "https://downloads.immortalwrt.org/releases/21.02.5/targets/x86/64/immortalwrt-sdk-21.02.5-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+          - target: aarch64_generic
+            sdk_url: "https://downloads.immortalwrt.org/releases/21.02.5/targets/rockchip/armv8/immortalwrt-sdk-21.02.5-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64.tar.xz"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libncurses5-dev \
+          libncursesw5-dev \
+          zlib1g-dev \
+          gawk \
+          git \
+          gettext \
+          libssl-dev \
+          xsltproc \
+          wget \
+          unzip \
+          python3 \
+          python3-pip
+
+    - name: Download and extract SDK
+      run: |
+        mkdir -p sdk
+        cd sdk
+        echo "Downloading SDK for ${{ matrix.target }}..."
+        wget -q ${{ matrix.sdk_url }}
+        tar -xf *.tar.xz --strip-components=1
+        echo "SDK extracted successfully"
+        cd ..
+
+    - name: Prepare package directory in SDK
+      run: |
+        mkdir -p sdk/package/${{ env.PACKAGE_NAME }}
+        cp Makefile sdk/package/${{ env.PACKAGE_NAME }}/
+        cp -r files sdk/package/${{ env.PACKAGE_NAME }}/
+        echo "=== Package structure ==="
+        find sdk/package/${{ env.PACKAGE_NAME }} -type f | sort
+
+    - name: Configure SDK
+      run: |
+        cd sdk
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Configure package selection
+      run: |
+        cd sdk
+        echo "CONFIG_TARGET_${{ matrix.target }}=y" > .config
+        echo "CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m" >> .config
+
+    - name: Build package
+      run: |
+        cd sdk
+        make defconfig
+        echo "Starting package compilation..."
+        make package/${{ env.PACKAGE_NAME }}/compile -j$(nproc) V=s
+
+    - name: Collect artifacts
+      run: |
+        mkdir -p artifacts/${{ matrix.target }}
+        find sdk/bin -name "*.ipk" | grep "${{ env.PACKAGE_NAME }}" | while read ipk; do
+          cp "$ipk" artifacts/${{ matrix.target }}/
+        done
+        echo "=== Built IPK files ==="
+        ls -la artifacts/${{ matrix.target }}/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.PACKAGE_NAME }}-${{ matrix.target }}
+        path: artifacts/${{ matrix.target }}/
+        retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: dist
+
+    - name: Create release package
+      run: |
+        mkdir -p release_packages
+        find dist -name "*.ipk" -exec cp {} release_packages/ \;
+        
+        # 创建包说明文件 - 使用简单的echo命令避免多行字符串问题
+        echo "Network Switcher Plugin for OpenWrt/ImmortalWrt" > release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "This package provides intelligent network interface switching with LuCI web interface." >> release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "Installation:" >> release_packages/README.txt
+        echo "1. Upload the appropriate IPK file for your device architecture" >> release_packages/README.txt
+        echo "2. Install using: opkg install <package-name>.ipk" >> release_packages/README.txt
+        echo "3. Access via LuCI: Services -> Network Switcher" >> release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "Supported architectures:" >> release_packages/README.txt
+        echo "- x86-64: For x86 64-bit devices" >> release_packages/README.txt
+        echo "- aarch64_generic: For ARM 64-bit devices" >> release_packages/README.txt
+
+        # 创建zip包
+        zip -r ${{ env.PACKAGE_NAME }}-${{ github.event.release.tag_name }}.zip release_packages/
+
+    - name: Upload IPKs to release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          release_packages/*.ipk
+          release_packages/README.txt
