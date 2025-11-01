@@ -24,8 +24,9 @@ read_uci_config() {
     [ -z "$PING_COUNT" ] && PING_COUNT=3
     [ -z "$PING_TIMEOUT" ] && PING_TIMEOUT=3
     [ -z "$SWITCH_WAIT_TIME" ] && SWITCH_WAIT_TIME=3
-    [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
+    PING_SUCCESS_COUNT=$(uci -q get network_switcher.settings.ping_success_count || echo "1")
+    [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
     PING_TARGETS=$(uci -q get network_switcher.settings.ping_targets | tr ' ' '\n' | sed '/^$/d' | tr '\n' ' ')
     
@@ -372,9 +373,13 @@ test_network_connectivity() {
         return 1
     fi
     
+    local success_count=0
     for target in $PING_TARGETS; do
         if ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target" >/dev/null 2>&1; then
-            return 0 # Success
+            success_count=$((success_count + 1))
+            if [ $success_count -ge $PING_SUCCESS_COUNT ]; then
+                return 0 # Success
+            fi
         fi
     done
     
