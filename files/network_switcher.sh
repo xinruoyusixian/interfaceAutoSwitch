@@ -133,6 +133,24 @@ acquire_lock() {
     fi
 }
 
+acquire_lock_non_blocking() {
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        if [ -n "$lock_pid" ] && [ -d "/proc/$lock_pid" ]; then
+            return 1
+        else
+            rm -f "$LOCK_FILE" 2>/dev/null
+        fi
+    fi
+    
+    echo $$ > "$LOCK_FILE" 2>/dev/null
+    if [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$$" ]; then
+        return 0
+    fi
+    
+    return 1
+}
+
 release_lock() {
     if [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$$" ]; then
         rm -f "$LOCK_FILE"
@@ -173,10 +191,16 @@ service_control() {
             
             cleanup_stale_processes
             
+            if ! acquire_lock; then
+                echo "无法获取锁，请稍后重试"
+                return 1
+            fi
+            
             read_uci_config
             
             if [ $INTERFACE_COUNT -eq 0 ]; then
                 echo "错误: 未配置任何有效的网络接口"
+                release_lock
                 return 1
             fi
             
@@ -184,6 +208,7 @@ service_control() {
                 local pid=$(cat "$PID_FILE")
                 if [ -d "/proc/$pid" ]; then
                     echo "服务已在运行 (PID: $pid)"
+                    release_lock
                     return 0
                 fi
             fi
@@ -199,14 +224,21 @@ service_control() {
             
             if [ -d "/proc/$pid" ]; then
                 echo "服务启动成功 (PID: $pid)"
-                return 0
             else
                 echo "服务启动失败"
+                release_lock
                 return 1
             fi
+            
+            release_lock
             ;;
         "stop")
             echo "正在停止网络切换服务..."
+            
+            if ! acquire_lock; then
+                echo "无法获取锁，请稍后重试"
+                return 1
+            fi
             
             cleanup_stale_processes
             
@@ -264,16 +296,10 @@ service_control() {
 }
 
 get_configured_interfaces() {
-    if acquire_lock_silent; then
-        read_uci_config
-        for iface in $INTERFACES; do
-            echo "$iface"
-        done
-        release_lock
-    else
-        uci show network_switcher 2>/dev/null | grep -E "(\.interface=|@interface\[.*\.interface=)" | \
-        awk -F'=' '{print $2}' | tr -d "'" | sort | uniq
-    fi
+    read_uci_config
+    for iface in $INTERFACES; do
+        echo "$iface"
+    done
 }
 
 get_interface_device() {
@@ -365,7 +391,8 @@ switch_interface() {
     ip route del default 2>/dev/null
     ip route replace default via "$gateway" dev "$device" metric "$metric"
     
-    sleep $SWITCH_WAIT_TIME
+    # 修复：使用正确的sleep参数
+    sleep "$SWITCH_WAIT_TIME"
     
     local current_device=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
     if [ "$current_device" = "$device" ]; then
@@ -387,10 +414,16 @@ switch_interface() {
 }
 
 auto_switch() {
+    if ! acquire_lock_non_blocking; then
+        echo "另一个实例正在运行，无法执行自动切换"
+        return 1
+    fi
+    
     read_uci_config
     
     if [ "$ENABLED" != "1" ]; then
         echo "服务未启用"
+        release_lock
         return 0
     fi
     
@@ -400,8 +433,12 @@ auto_switch() {
             local primary_device=$(get_interface_device "$PRIMARY_INTERFACE")
             
             if [ "$current_device" != "$primary_device" ]; then
-                switch_interface "$PRIMARY_INTERFACE" && return 0
+                switch_interface "$PRIMARY_INTERFACE" && {
+                    release_lock
+                    return 0
+                }
             else
+                release_lock
                 return 0
             fi
         fi
@@ -414,8 +451,12 @@ auto_switch() {
                 local target_device=$(get_interface_device "$interface")
                 
                 if [ "$current_device" != "$target_device" ]; then
-                    switch_interface "$interface" && return 0
+                    switch_interface "$interface" && {
+                        release_lock
+                        return 0
+                    }
                 else
+                    release_lock
                     return 0
                 fi
             fi
@@ -424,6 +465,7 @@ auto_switch() {
     
     echo "所有接口都不可用"
     log "所有接口都不可用" "ERROR"
+    release_lock
     return 1
 }
 
@@ -532,18 +574,25 @@ test_connectivity() {
 run_daemon() {
     log "启动守护进程" "SERVICE"
     
-    trap 'log "收到信号，退出守护进程" "SERVICE"; exit 0' TERM INT
+    trap 'log "收到信号，退出守护进程" "SERVICE"; release_lock; exit 0' TERM INT
     
     while true; do
+        if ! acquire_lock_non_blocking; then
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+        
         read_uci_config
         
         if [ "$ENABLED" = "1" ] && [ $INTERFACE_COUNT -gt 0 ]; then
             auto_switch
         else
             log "服务已禁用或无接口配置，退出守护进程" "SERVICE"
+            release_lock
             break
         fi
         
+        release_lock
         sleep "$CHECK_INTERVAL"
     done
 }
@@ -559,14 +608,13 @@ clear_log() {
 }
 
 main() {
-    acquire_lock
-    trap release_lock EXIT
-    
     case "$1" in
-        start|stop|restart|status)
+        start|stop|restart)
             service_control "$1"
             ;;
         daemon)
+            acquire_lock
+            trap release_lock EXIT
             run_daemon
             ;;
         auto)
@@ -574,6 +622,11 @@ main() {
             ;;
         switch)
             if [ -n "$2" ]; then
+                if ! acquire_lock; then
+                    echo "另一个实例正在运行，无法执行切换"
+                    exit 1
+                fi
+                trap release_lock EXIT
                 switch_interface "$2"
             else
                 echo "用法: $0 switch <接口名>"
@@ -600,7 +653,7 @@ main() {
             cleanup_stale_processes
             ;;
         *)
-            echo "网络切换器 v1.2.2"
+            echo "网络切换器 v1.2.3"
             echo ""
             echo "用法: $0 <命令>"
             echo ""
