@@ -87,7 +87,7 @@ function action_get_log()
     
     local log_content = "日志文件为空"
     if nixio.fs.access("/var/log/network_switcher.log") then
-        log_content = sys.exec("cat /var/log/network_switcher.log 2>/dev/null")
+        log_content = sys.exec("cat /var/log/network_switcher.log 2>/dev/null | tail -100")
     end
     
     lucihttp.prepare_content("text/plain")
