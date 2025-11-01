@@ -1,0 +1,344 @@
+<!-- files/usr/lib/lua/luci/view/network_switcher/overview.htm -->
+<%+header%>
+
+<div class="cbi-map">
+    <h2 name="content">网络切换器概览</h2>
+    
+    <div class="cbi-map-descr">
+        网络接口切换的实时状态和控制。
+    </div>
+    
+    <fieldset class="cbi-section">
+        <legend>服务控制</legend>
+        <div id="service-control">
+            <div class="cbi-value">
+                <label class="cbi-value-title">启用服务</label>
+                <div class="cbi-value-field">
+                    <input type="checkbox" id="enable-service" onchange="toggleService()" />
+                    <label for="enable-service">启用网络切换服务</label>
+                    <div style="margin-top: 5px;">
+                        <button class="cbi-button cbi-button-reload" onclick="refreshStatus()" style="margin-right: 5px;">
+                            刷新状态
+                        </button>
+                        <button class="cbi-button cbi-button-reset" onclick="restartService()">
+                            重启服务
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="cbi-value">
+                <label class="cbi-value-title">当前互联网出口</label>
+                <div class="cbi-value-field">
+                    <span id="current-interface" style="font-weight: bold;">-</span>
+                </div>
+            </div>
+            
+            <div class="cbi-value">
+                <label class="cbi-value-title">主接口</label>
+                <div class="cbi-value-field">
+                    <span id="primary-interface" style="font-weight: bold;">-</span>
+                </div>
+            </div>
+            
+            <div class="cbi-value">
+                <label class="cbi-value-title">服务状态</label>
+                <div class="cbi-value-field">
+                    <span id="service-status">-</span>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+    
+    <fieldset class="cbi-section">
+        <legend>网络操作</legend>
+        <div class="cbi-value">
+            <label class="cbi-value-title">手动切换</label>
+            <div class="cbi-value-field">
+                <select id="interface-select" style="min-width: 150px; margin-right: 10px;">
+                    <option value="">选择接口...</option>
+                </select>
+                <button class="cbi-button cbi-button-action" onclick="switchInterface()" id="switch-btn">
+                    切换到选定接口
+                </button>
+                <button class="cbi-button cbi-button-reload" onclick="loadInterfaces()" style="margin-left: 5px;" title="刷新接口列表">
+                    ↻
+                </button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">自动切换</label>
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-positive" onclick="autoSwitch()">
+                    执行自动切换
+                </button>
+                <span style="margin-left: 10px; color: #666;">优先使用主接口</span>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">网络测试</label>
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-apply" onclick="testConnectivity()">
+                    测试网络连通性
+                </button>
+            </div>
+        </div>
+    </fieldset>
+    
+    <fieldset class="cbi-section">
+        <legend>操作结果</legend>
+        <pre id="operation-result" style="min-height: 100px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; font-size: 12px;"></pre>
+    </fieldset>
+    
+    <fieldset class="cbi-section">
+        <legend>详细状态</legend>
+        <pre id="status-output" style="min-height: 200px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; font-size: 12px;"></pre>
+    </fieldset>
+</div>
+
+<script>
+window.onload = function() {
+    refreshStatus();
+    loadInterfaces();
+};
+
+function loadInterfaces() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/get_configured_interfaces")%>', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+            if (xhr.status === 200) {
+                try {
+                    var interfaces = JSON.parse(xhr.responseText);
+                    updateInterfaceSelect(interfaces);
+                } catch (e) {
+                    updateInterfaceSelect(['wan', 'wwan']);
+                }
+            } else {
+                updateInterfaceSelect(['wan', 'wwan']);
+            }
+        }
+    };
+    xhr.send();
+}
+
+function updateInterfaceSelect(interfaces) {
+    var select = document.getElementById('interface-select');
+    var currentValue = select.value;
+    
+    while (select.options.length > 0) {
+        select.remove(0);
+    }
+    
+    var defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = '选择接口...';
+    select.appendChild(defaultOption);
+    
+    if (interfaces && interfaces.length > 0) {
+        interfaces.forEach(function(iface) {
+            if (iface && iface.trim() !== '' && 
+                !iface.includes('另一个实例') && 
+                !iface.includes('无法获取锁')) {
+                var option = document.createElement('option');
+                option.value = iface;
+                option.textContent = iface;
+                select.appendChild(option);
+            }
+        });
+    } else {
+        var wanOption = document.createElement('option');
+        wanOption.value = 'wan';
+        wanOption.textContent = 'wan';
+        select.appendChild(wanOption);
+        
+        var wwanOption = document.createElement('option');
+        wwanOption.value = 'wwan';
+        wwanOption.textContent = 'wwan';
+        select.appendChild(wwanOption);
+    }
+    
+    if (currentValue) {
+        select.value = currentValue;
+    }
+}
+
+function refreshStatus() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/status")%>', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+                var response = JSON.parse(xhr.responseText);
+                
+                updateServiceStatus(response.service);
+                
+                var statusText = response.status_output;
+                var match = statusText.match(/当前互联网出口:\s*(\S+)/);
+                if (match) {
+                    document.getElementById('current-interface').textContent = match[1];
+                }
+                
+                var primaryMatch = statusText.match(/主接口:\s*(\S+)/);
+                if (primaryMatch) {
+                    document.getElementById('primary-interface').textContent = primaryMatch[1];
+                }
+                
+                document.getElementById('status-output').textContent = statusText;
+                
+            } catch (e) {
+            }
+        }
+    };
+    xhr.send();
+}
+
+function updateServiceStatus(serviceStatus) {
+    var statusElement = document.getElementById('service-status');
+    var enableCheckbox = document.getElementById('enable-service');
+    
+    if (serviceStatus === 'running') {
+        statusElement.innerHTML = '<span style="color: green">● 运行中</span>';
+        enableCheckbox.checked = true;
+    } else {
+        statusElement.innerHTML = '<span style="color: red">● 已停止</span>';
+        enableCheckbox.checked = false;
+    }
+}
+
+function toggleService() {
+    var enableCheckbox = document.getElementById('enable-service');
+    var action = enableCheckbox.checked ? 'start' : 'stop';
+    
+    showResult((enableCheckbox.checked ? "正在启动服务..." : "正在停止服务..."));
+    
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/service_control")%>?action=' + action, true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+            if (xhr.status === 200) {
+                try {
+                    var response = JSON.parse(xhr.responseText);
+                    showResult(response.message);
+                    setTimeout(refreshStatus, 2000);
+                } catch (e) {
+                    showResult("操作完成");
+                    setTimeout(refreshStatus, 2000);
+                }
+            } else {
+                showResult("操作失败");
+                enableCheckbox.checked = !enableCheckbox.checked;
+            }
+        }
+    };
+    xhr.send();
+}
+
+function restartService() {
+    showResult("正在重启服务...");
+    
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/service_control")%>?action=restart', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+                var response = JSON.parse(xhr.responseText);
+                showResult(response.message);
+                setTimeout(refreshStatus, 3000);
+            } catch (e) {
+                showResult("重启完成");
+                setTimeout(refreshStatus, 3000);
+            }
+        }
+    };
+    xhr.send();
+}
+
+function switchInterface() {
+    var select = document.getElementById('interface-select');
+    var interface = select.value;
+    
+    if (!interface) {
+        alert('请选择接口');
+        return;
+    }
+    
+    if (!confirm('切换到 ' + interface + '?')) {
+        return;
+    }
+    
+    showResult("正在切换到 " + interface + "...");
+    
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/switch")%>?interface=' + interface, true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+                var response = JSON.parse(xhr.responseText);
+                showResult(response.message);
+                setTimeout(refreshStatus, 2000);
+            } catch (e) {
+                showResult("切换操作完成");
+                setTimeout(refreshStatus, 2000);
+            }
+        }
+    };
+    xhr.send();
+}
+
+function autoSwitch() {
+    if (!confirm('执行自动切换?')) {
+        return;
+    }
+    
+    showResult("正在执行自动切换...");
+    
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/switch")%>?interface=auto', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+                var response = JSON.parse(xhr.responseText);
+                showResult(response.message);
+                setTimeout(refreshStatus, 2000);
+            } catch (e) {
+                showResult("自动切换完成");
+                setTimeout(refreshStatus, 2000);
+            }
+        }
+    };
+    xhr.send();
+}
+
+function testConnectivity() {
+    showResult("正在测试网络...");
+    
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/test")%>', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+                var response = JSON.parse(xhr.responseText);
+                showResult(response.output);
+                setTimeout(refreshStatus, 1000);
+            } catch (e) {
+                showResult("测试完成");
+                setTimeout(refreshStatus, 1000);
+            }
+        }
+    };
+    xhr.send();
+}
+
+function showResult(message) {
+    var resultElement = document.getElementById('operation-result');
+    resultElement.textContent = message;
+    resultElement.scrollTop = resultElement.scrollHeight;
+}
+
+setInterval(refreshStatus, 30000);
+</script>
+
+<%+footer%>
