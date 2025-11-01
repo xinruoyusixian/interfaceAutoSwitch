@@ -19,12 +19,6 @@ ping_targets = s:option(DynamicList, "ping_targets", "Ping目标",
 ping_targets.default = {"8.8.8.8", "1.1.1.1", "223.5.5.5"}
 ping_targets.placeholder = "8.8.8.8"
 
-ping_success_count = s:option(Value, "ping_success_count", "Ping成功次数", 
-    "需要成功Ping通的目标数量才认为网络正常")
-ping_success_count.datatype = "uinteger"
-ping_success_count.default = "1"
-ping_success_count.placeholder = "1"
-
 ping_count = s:option(Value, "ping_count", "Ping次数", 
     "对每个目标发送的ping包数量")
 ping_count.datatype = "range(1,10)"
@@ -92,16 +86,21 @@ primary = interfaces_s:option(Flag, "primary", "主接口",
     "设置为主接口，自动切换时优先使用")
 primary.default = "0"
 
-function primary.write(self, section, value)
-    if value == "1" then
-        uci:foreach("network_switcher", "interface", 
-            function(s)
-                if s[".name"] ~= section then
-                    uci:set("network_switcher", s[".name"], "primary", "0")
-                end
-            end)
+function interfaces_s.validate(self, section)
+    local primary_count = 0
+    uci:foreach("network_switcher", "interface", function(s)
+        if s.primary == "1" then
+            primary_count = primary_count + 1
+        end
+    end)
+
+    if primary_count == 0 then
+        return nil, "必须设置一个主接口"
+    elseif primary_count > 1 then
+        return nil, "只能设置一个主接口"
     end
-    Flag.write(self, section, value)
+
+    return true
 end
 
 -- 重新设计定时任务部分
@@ -116,6 +115,7 @@ schedule_enabled.default = "1"
 
 schedule_time = schedule_s:option(Value, "time", "时间", 
     "切换时间，格式: HH:MM (24小时制)")
+schedule_time.datatype = "time"
 schedule_time.default = "08:00"
 schedule_time.placeholder = "08:00"
 
