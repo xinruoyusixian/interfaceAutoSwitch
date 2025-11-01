@@ -373,16 +373,13 @@ test_network_connectivity() {
         return 1
     fi
     
-    local success_count=0
     for target in $PING_TARGETS; do
         if ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target" >/dev/null 2>&1; then
-            success_count=$((success_count + 1))
+            return 0 # Success
         fi
     done
     
-    # 确保 PING_SUCCESS_COUNT 有值
-    local required_count=${PING_SUCCESS_COUNT:-1}
-    [ $success_count -ge $required_count ]
+    return 1 # Failure
 }
 
 switch_interface() {

@@ -55,9 +55,9 @@ function action_switch()
             command = "switch " .. interface
         end
         
-        local result = sys.exec("/usr/bin/network_switcher " .. command .. " 2>&1")
+        sys.exec("/usr/bin/network_switcher " .. command .. " >/dev/null 2>&1 &")
         response.success = true
-        response.message = result
+        response.message = "切换命令已在后台执行。"
     else
         response.success = false
         response.message = "无效的接口"
@@ -71,10 +71,10 @@ function action_test()
     local lucihttp = require("luci.http")
     local sys = require("luci.sys")
     
-    local result = sys.exec("/usr/bin/network_switcher test 2>&1")
+    sys.exec("/usr/bin/network_switcher test >/dev/null 2>&1 &")
     local response = {
         success = true,
-        output = result
+        output = "测试命令已在后台执行。"
     }
     
     lucihttp.prepare_content("application/json")
@@ -102,9 +102,9 @@ function action_service_control()
     local response = {}
     
     if action == "start" or action == "stop" or action == "restart" then
-        local result = sys.exec("/usr/bin/network_switcher " .. action .. " 2>&1")
+        sys.exec("/usr/bin/network_switcher " .. action .. " >/dev/null 2>&1 &")
         response.success = true
-        response.message = result
+        response.message = "服务命令 '" .. action .. "' 已在后台执行。"
     else
         response.success = false
         response.message = "无效的操作"
