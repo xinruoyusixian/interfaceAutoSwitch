@@ -1,10 +1,8 @@
 #!/bin/sh
 # files/network_switcher.sh
-
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin"
 export HOME="/root"
 umask 0022
-
 CONFIG_FILE="/etc/config/network_switcher"
 LOCK_FILE="/var/lock/network_switcher.lock"
 LOG_FILE="/var/log/network_switcher.log"
@@ -19,11 +17,20 @@ read_uci_config() {
     SWITCH_WAIT_TIME=$(uci -q get network_switcher.settings.switch_wait_time || echo "3")
     PING_SUCCESS_COUNT=$(uci -q get network_switcher.settings.ping_success_count || echo "1")
     
+    # 确保数值变量有合理的默认值
+    [ -z "$CHECK_INTERVAL" ] && CHECK_INTERVAL=60
+    [ -z "$PING_COUNT" ] && PING_COUNT=3
+    [ -z "$PING_TIMEOUT" ] && PING_TIMEOUT=3
+    [ -z "$SWITCH_WAIT_TIME" ] && SWITCH_WAIT_TIME=3
+    [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
+    
     PING_TARGETS=""
     local index=0
-    while uci -q get network_switcher.@settings[0].ping_targets[$index] >/dev/null; do
-        local target=$(uci -q get network_switcher.@settings[0].ping_targets[$index])
-        PING_TARGETS="$PING_TARGETS $target"
+    while uci -q get "network_switcher.@settings[0].ping_targets[$index]" >/dev/null 2>&1; do
+        local target=$(uci -q get "network_switcher.@settings[0].ping_targets[$index]")
+        if [ -n "$target" ]; then
+            PING_TARGETS="$PING_TARGETS $target"
+        fi
         index=$((index + 1))
     done
     
@@ -34,8 +41,8 @@ read_uci_config() {
     INTERFACES=""
     INTERFACE_COUNT=0
     PRIMARY_INTERFACE=""
-    local seen_interfaces=""
     
+    # 首先处理命名接口配置
     local config_sections=$(uci show network_switcher 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1)
     
     for section in $config_sections; do
@@ -48,13 +55,13 @@ read_uci_config() {
         local primary=$(uci -q get network_switcher.$section.primary || echo "0")
         
         if [ "$enabled" = "1" ] && [ -n "$interface" ]; then
-            if echo "$seen_interfaces" | grep -q "\b$interface\b"; then
+            # 检查是否已经添加过这个接口
+            if echo "$INTERFACES" | grep -q "\b$interface\b"; then
                 continue
             fi
             
             INTERFACE_COUNT=$((INTERFACE_COUNT + 1))
             INTERFACES="$INTERFACES $interface"
-            seen_interfaces="$seen_interfaces $interface"
             
             if [ "$primary" = "1" ]; then
                 PRIMARY_INTERFACE="$interface"
@@ -62,40 +69,52 @@ read_uci_config() {
         fi
     done
     
-    local anonymous_count=0
-    while uci -q get network_switcher.@interface[$anonymous_count] >/dev/null; do
-        local enabled=$(uci -q get network_switcher.@interface[$anonymous_count].enabled || echo "1")
-        local interface=$(uci -q get network_switcher.@interface[$anonymous_count].interface)
-        local primary=$(uci -q get network_switcher.@interface[$anonymous_count].primary || echo "0")
+    # 然后处理匿名接口配置
+    local section_index=0
+    while uci -q get "network_switcher.@interface[$section_index]" >/dev/null 2>&1; do
+        local enabled=$(uci -q get "network_switcher.@interface[$section_index].enabled" || echo "1")
+        local interface=$(uci -q get "network_switcher.@interface[$section_index].interface")
+        local primary=$(uci -q get "network_switcher.@interface[$section_index].primary" || echo "0")
         
         if [ "$enabled" = "1" ] && [ -n "$interface" ]; then
-            if echo "$seen_interfaces" | grep -q "\b$interface\b"; then
-                anonymous_count=$((anonymous_count + 1))
+            # 检查是否已经添加过这个接口
+            if echo "$INTERFACES" | grep -q "\b$interface\b"; then
+                section_index=$((section_index + 1))
                 continue
             fi
             
             INTERFACE_COUNT=$((INTERFACE_COUNT + 1))
             INTERFACES="$INTERFACES $interface"
-            seen_interfaces="$seen_interfaces $interface"
             
             if [ "$primary" = "1" ]; then
                 PRIMARY_INTERFACE="$interface"
             fi
         fi
         
-        anonymous_count=$((anonymous_count + 1))
+        section_index=$((section_index + 1))
     done
     
+    # 如果没有找到任何接口，使用默认值
+    if [ $INTERFACE_COUNT -eq 0 ]; then
+        INTERFACES="wan wwan"
+        INTERFACE_COUNT=2
+        PRIMARY_INTERFACE="wan"
+    fi
+    
+    # 如果没有设置主接口，使用第一个接口
     if [ -z "$PRIMARY_INTERFACE" ] && [ $INTERFACE_COUNT -gt 0 ]; then
         PRIMARY_INTERFACE=$(echo $INTERFACES | awk '{print $1}')
     fi
+    
+    # 调试信息
+    log "配置读取: ENABLED=$ENABLED, INTERFACES='$INTERFACES', PRIMARY='$PRIMARY_INTERFACE'" "DEBUG"
 }
 
 log() {
     local message="$1"
     local level="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $message" >> "$LOG_FILE"
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 }
 
 acquire_lock_silent() {
@@ -342,7 +361,9 @@ test_network_connectivity() {
         fi
     done
     
-    [ $success_count -ge $PING_SUCCESS_COUNT ]
+    # 确保 PING_SUCCESS_COUNT 有值
+    local required_count=${PING_SUCCESS_COUNT:-1}
+    [ $success_count -ge $required_count ]
 }
 
 switch_interface() {
@@ -365,6 +386,7 @@ switch_interface() {
     
     local metric="10"
     
+    # 查找接口的metric配置
     local config_sections=$(uci show network_switcher 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1)
     for section in $config_sections; do
         if [ "$section" = "settings" ] || [ "$section" = "schedule" ]; then
@@ -378,24 +400,31 @@ switch_interface() {
         fi
     done
     
-    local anonymous_count=0
-    while uci -q get network_switcher.@interface[$anonymous_count] >/dev/null; do
-        local iface=$(uci -q get network_switcher.@interface[$anonymous_count].interface)
+    local section_index=0
+    while uci -q get "network_switcher.@interface[$section_index]" >/dev/null 2>&1; do
+        local iface=$(uci -q get "network_switcher.@interface[$section_index].interface")
         if [ "$iface" = "$target_interface" ]; then
-            metric=$(uci -q get network_switcher.@interface[$anonymous_count].metric || echo "10")
+            metric=$(uci -q get "network_switcher.@interface[$section_index].metric" || echo "10")
             break
         fi
-        anonymous_count=$((anonymous_count + 1))
+        section_index=$((section_index + 1))
     done
     
+    echo "删除默认路由..."
     ip route del default 2>/dev/null
+    echo "添加新默认路由: via $gateway dev $device metric $metric"
     ip route replace default via "$gateway" dev "$device" metric "$metric"
     
-    # 修复：使用正确的sleep参数
-    sleep "$SWITCH_WAIT_TIME"
+    # 确保 SWITCH_WAIT_TIME 有值
+    local wait_time=${SWITCH_WAIT_TIME:-3}
+    echo "等待 $wait_time 秒..."
+    sleep "$wait_time"
     
     local current_device=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
+    echo "当前默认路由设备: $current_device"
+    
     if [ "$current_device" = "$device" ]; then
+        echo "路由切换成功，测试网络连通性..."
         if test_network_connectivity "$target_interface"; then
             echo "切换到 $target_interface 成功"
             log "切换到 $target_interface 成功" "SWITCH"
@@ -405,7 +434,7 @@ switch_interface() {
             echo "切换后网络测试失败"
         fi
     else
-        echo "路由切换验证失败"
+        echo "路由切换验证失败，期望设备: $device，实际设备: $current_device"
     fi
     
     echo "切换验证失败"
@@ -433,14 +462,18 @@ auto_switch() {
             local primary_device=$(get_interface_device "$PRIMARY_INTERFACE")
             
             if [ "$current_device" != "$primary_device" ]; then
+                echo "主接口可用，切换到主接口: $PRIMARY_INTERFACE"
                 switch_interface "$PRIMARY_INTERFACE" && {
                     release_lock
                     return 0
                 }
             else
+                echo "已经是主接口，无需切换"
                 release_lock
                 return 0
             fi
+        else
+            echo "主接口不可用: $PRIMARY_INTERFACE"
         fi
     fi
     
@@ -451,14 +484,18 @@ auto_switch() {
                 local target_device=$(get_interface_device "$interface")
                 
                 if [ "$current_device" != "$target_device" ]; then
+                    echo "备用接口可用，切换到: $interface"
                     switch_interface "$interface" && {
                         release_lock
                         return 0
                     }
                 else
+                    echo "已经是目标接口，无需切换"
                     release_lock
                     return 0
                 fi
+            else
+                echo "接口不可用: $interface"
             fi
         fi
     done
@@ -527,6 +564,7 @@ test_connectivity() {
     
     echo "=== 网络连通性测试 ==="
     echo "测试目标: $PING_TARGETS"
+    echo "Ping次数: $PING_COUNT, 超时: ${PING_TIMEOUT}s, 成功要求: ${PING_SUCCESS_COUNT}个目标"
     echo ""
     
     if [ $INTERFACE_COUNT -eq 0 ]; then
@@ -559,10 +597,11 @@ test_connectivity() {
                 fi
             done
             
-            if [ $success_count -ge $PING_SUCCESS_COUNT ]; then
-                echo "  总体结果: ✓ 通过 ($success_count/$PING_SUCCESS_COUNT)"
+            local required_count=${PING_SUCCESS_COUNT:-1}
+            if [ $success_count -ge $required_count ]; then
+                echo "  总体结果: ✓ 通过 ($success_count/$required_count)"
             else
-                echo "  总体结果: ✗ 失败 ($success_count/$PING_SUCCESS_COUNT)"
+                echo "  总体结果: ✗ 失败 ($success_count/$required_count)"
             fi
         else
             echo "  接口不可用"
@@ -653,7 +692,7 @@ main() {
             cleanup_stale_processes
             ;;
         *)
-            echo "网络切换器 v1.2.3"
+            echo "网络切换器 v1.2.4"
             echo ""
             echo "用法: $0 <命令>"
             echo ""
