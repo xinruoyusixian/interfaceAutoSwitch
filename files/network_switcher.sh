@@ -1,8 +1,10 @@
 #!/bin/sh
 # files/network_switcher.sh
+
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin"
 export HOME="/root"
 umask 0022
+
 CONFIG_FILE="/etc/config/network_switcher"
 LOCK_FILE="/var/lock/network_switcher.lock"
 LOG_FILE="/var/log/network_switcher.log"
@@ -24,19 +26,32 @@ read_uci_config() {
     [ -z "$SWITCH_WAIT_TIME" ] && SWITCH_WAIT_TIME=3
     [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
-    PING_TARGETS=""
-    local index=0
-    while uci -q get "network_switcher.@settings[0].ping_targets[$index]" >/dev/null 2>&1; do
-        local target=$(uci -q get "network_switcher.@settings[0].ping_targets[$index]")
-        if [ -n "$target" ]; then
-            PING_TARGETS="$PING_TARGETS $target"
-        fi
-        index=$((index + 1))
-    done
     
+    PING_TARGETS=""
+      # 方法1：尝试从命名设置读取
+    local targets=$(uci -q get network_switcher.settings.ping_targets 2>/dev/null)
+    if [ -n "$targets" ]; then
+        PING_TARGETS="$targets"
+    else
+        # 方法2：从列表读取
+        local index=0
+        while uci -q get "network_switcher.@settings[0].ping_targets[$index]" >/dev/null 2>&1; do
+            local target=$(uci -q get "network_switcher.@settings[0].ping_targets[$index]")
+            if [ -n "$target" ]; then
+                PING_TARGETS="$PING_TARGETS $target"
+            fi
+            index=$((index + 1))
+        done
+    fi
+    
+    # 如果仍然为空，使用默认值
     if [ -z "$PING_TARGETS" ]; then
         PING_TARGETS="8.8.8.8 1.1.1.1 223.5.5.5"
     fi
+    
+    # 去除多余空格
+    PING_TARGETS=$(echo $PING_TARGETS | sed 's/^ *//;s/ *$//')
+    
     
     INTERFACES=""
     INTERFACE_COUNT=0
@@ -610,10 +625,63 @@ test_connectivity() {
     done
 }
 
+
+
+clear_log() {
+    if [ -f "$LOG_FILE" ]; then
+        > "$LOG_FILE"
+        echo "日志已清空"
+        log "日志已清空" "SERVICE"
+    else
+        echo "日志文件不存在"
+    fi
+}
+
+# 在主脚本中添加定时任务处理函数
+check_schedule() {
+    local current_time=$(date '+%H:%M')
+    local current_minutes=$(date '+%H:%M' | sed 's/://')
+    
+    # 检查所有定时任务
+    local section_index=0
+    while uci -q get "network_switcher.@schedule[$section_index]" >/dev/null 2>&1; do
+        local enabled=$(uci -q get "network_switcher.@schedule[$section_index].enabled" || echo "1")
+        local schedule_time=$(uci -q get "network_switcher.@schedule[$section_index].time")
+        local target=$(uci -q get "network_switcher.@schedule[$section_index].target")
+        
+        if [ "$enabled" = "1" ] && [ -n "$schedule_time" ] && [ -n "$target" ]; then
+            local schedule_minutes=$(echo "$schedule_time" | sed 's/://')
+            
+            # 简单的时间匹配（精确到分钟）
+            if [ "$current_minutes" = "$schedule_minutes" ]; then
+                echo "执行定时任务: $schedule_time -> $target"
+                log "执行定时任务: $schedule_time -> $target" "SCHEDULE"
+                
+                if [ "$target" = "auto" ]; then
+                    auto_switch
+                else
+                    switch_interface "$target"
+                fi
+                
+                # 避免同一分钟内重复执行
+                sleep 60
+                return 0
+            fi
+        fi
+        
+        section_index=$((section_index + 1))
+    done
+    
+    return 0
+}
+
+# 在 run_daemon 函数中添加定时任务检查
 run_daemon() {
     log "启动守护进程" "SERVICE"
     
     trap 'log "收到信号，退出守护进程" "SERVICE"; release_lock; exit 0' TERM INT
+    
+    local last_schedule_check=0
     
     while true; do
         if ! acquire_lock_non_blocking; then
@@ -624,6 +692,13 @@ run_daemon() {
         read_uci_config
         
         if [ "$ENABLED" = "1" ] && [ $INTERFACE_COUNT -gt 0 ]; then
+            # 每分钟检查一次定时任务
+            local current_time=$(date +%s)
+            if [ $((current_time - last_schedule_check)) -ge 60 ]; then
+                check_schedule
+                last_schedule_check=$current_time
+            fi
+            
             auto_switch
         else
             log "服务已禁用或无接口配置，退出守护进程" "SERVICE"
@@ -634,16 +709,6 @@ run_daemon() {
         release_lock
         sleep "$CHECK_INTERVAL"
     done
-}
-
-clear_log() {
-    if [ -f "$LOG_FILE" ]; then
-        > "$LOG_FILE"
-        echo "日志已清空"
-        log "日志已清空" "SERVICE"
-    else
-        echo "日志文件不存在"
-    fi
 }
 
 main() {
