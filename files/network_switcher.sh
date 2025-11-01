@@ -12,7 +12,8 @@ STATE_FILE="/var/state/network_switcher.state"
 PID_FILE="/var/run/network_switcher.pid"
 
 read_uci_config() {
-    ENABLED=$(uci -q get network_switcher.settings.enabled || echo "1")
+    ENABLED=$(uci -q get network_switcher.settings.enabled)
+    [ -z "$ENABLED" ] && ENABLED=$(uci -q get network_switcher.settings.enabled || echo "1")
     CHECK_INTERVAL=$(uci -q get network_switcher.settings.check_interval || echo "60")
     PING_COUNT=$(uci -q get network_switcher.settings.ping_count || echo "3")
     PING_TIMEOUT=$(uci -q get network_switcher.settings.ping_timeout || echo "3")
@@ -27,22 +28,7 @@ read_uci_config() {
     [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
     
-    PING_TARGETS=""
-      # 方法1：尝试从命名设置读取
-    local targets=$(uci -q get network_switcher.settings.ping_targets 2>/dev/null)
-    if [ -n "$targets" ]; then
-        PING_TARGETS="$targets"
-    else
-        # 方法2：从列表读取
-        local index=0
-        while uci -q get "network_switcher.@settings[0].ping_targets[$index]" >/dev/null 2>&1; do
-            local target=$(uci -q get "network_switcher.@settings[0].ping_targets[$index]")
-            if [ -n "$target" ]; then
-                PING_TARGETS="$PING_TARGETS $target"
-            fi
-            index=$((index + 1))
-        done
-    fi
+    PING_TARGETS=$(uci -q get network_switcher.settings.ping_targets | tr ' ' '\n' | sed '/^$/d' | tr '\n' ' ')
     
     # 如果仍然为空，使用默认值
     if [ -z "$PING_TARGETS" ]; then
@@ -121,13 +107,43 @@ read_uci_config() {
         PRIMARY_INTERFACE=$(echo $INTERFACES | awk '{print $1}')
     fi
     
+    LOG_LEVEL=$(uci -q get network_switcher.settings.log_level || echo "INFO")
+
     # 调试信息
-    log "配置读取: ENABLED=$ENABLED, INTERFACES='$INTERFACES', PRIMARY='$PRIMARY_INTERFACE'" "DEBUG"
+    log "配置读取: ENABLED=$ENABLED, INTERFACES='$INTERFACES', PRIMARY='$PRIMARY_INTERFACE', LOG_LEVEL='$LOG_LEVEL'" "DEBUG"
 }
 
 log() {
     local message="$1"
     local level="$2"
+
+    [ -z "$LOG_LEVEL" ] && LOG_LEVEL="INFO"
+
+    case "$LOG_LEVEL" in
+        "DEBUG")
+            ;;
+        "INFO")
+            if [ "$level" = "DEBUG" ]; then
+                return
+            fi
+            ;;
+        "WARN")
+            if [ "$level" = "DEBUG" ] || [ "$level" = "INFO" ]; then
+                return
+            fi
+            ;;
+        "ERROR")
+            if [ "$level" != "ERROR" ]; then
+                return
+            fi
+            ;;
+        *)
+            if [ "$level" = "DEBUG" ]; then
+                return
+            fi
+            ;;
+    esac
+
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 }
@@ -659,7 +675,7 @@ check_schedule() {
                 fi
                 
                 # 避免同一分钟内重复执行
-                sleep 60
+                sleep 1
                 return 0
             fi
         fi
@@ -689,12 +705,12 @@ run_daemon() {
         if [ "$ENABLED" = "1" ] && [ $INTERFACE_COUNT -gt 0 ]; then
             # 每分钟检查一次定时任务
             local current_time=$(date +%s)
-            if [ $((current_time - last_schedule_check)) -ge 60 ]; then
+            if [ $((current_time - last_schedule_check)) -ge 59 ]; then
                 check_schedule
                 last_schedule_check=$current_time
+            else
+                auto_switch
             fi
-            
-            auto_switch
         else
             log "服务已禁用或无接口配置，退出守护进程" "SERVICE"
             break

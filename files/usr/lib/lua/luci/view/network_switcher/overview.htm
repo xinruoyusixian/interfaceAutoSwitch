@@ -59,14 +59,6 @@
         </div>
         
         <div class="cbi-value">
-            <label class="cbi-value-title">自动切换</label>
-            <div class="cbi-value-field">
-                <button class="cbi-button cbi-button-positive" id="auto-switch-btn">执行自动切换</button>
-                <span style="margin-left: 10px; color: #666;">优先使用主接口</span>
-            </div>
-        </div>
-        
-        <div class="cbi-value">
             <label class="cbi-value-title">网络测试</label>
             <div class="cbi-value-field">
                 <button class="cbi-button cbi-button-apply" id="test-btn">测试网络连通性</button>
@@ -100,7 +92,6 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('restart-btn').addEventListener('click', restartService);
     document.getElementById('switch-btn').addEventListener('click', switchInterface);
     document.getElementById('reload-interfaces-btn').addEventListener('click', loadInterfaces);
-    document.getElementById('auto-switch-btn').addEventListener('click', autoSwitch);
     document.getElementById('test-btn').addEventListener('click', testConnectivity);
     document.getElementById('refresh-log-btn').addEventListener('click', refreshLog);
     document.getElementById('clear-log-btn').addEventListener('click', clearLog);
@@ -289,30 +280,6 @@ function switchInterface() {
                 setTimeout(refreshStatus, 2000);
             } catch (e) {
                 addLogMessage("切换操作完成");
-                setTimeout(refreshStatus, 2000);
-            }
-        }
-    };
-    xhr.send();
-}
-
-function autoSwitch() {
-    if (!confirm('执行自动切换?')) {
-        return;
-    }
-    
-    addLogMessage("正在执行自动切换...");
-    
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', baseUrl + '/switch?interface=auto', true);
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4 && xhr.status === 200) {
-            try {
-                var response = JSON.parse(xhr.responseText);
-                addLogMessage(response.message);
-                setTimeout(refreshStatus, 2000);
-            } catch (e) {
-                addLogMessage("自动切换完成");
                 setTimeout(refreshStatus, 2000);
             }
         }

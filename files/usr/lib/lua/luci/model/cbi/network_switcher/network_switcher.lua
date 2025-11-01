@@ -8,9 +8,6 @@ s = m:section(TypedSection, "settings", "全局设置")
 s.anonymous = true
 s.addremove = false
 
-enabled = s:option(Flag, "enabled", "启用服务", "启用网络切换服务")
-enabled.default = "1"
-
 check_interval = s:option(Value, "check_interval", "检查间隔(秒)", 
     "网络检查的时间间隔")
 check_interval.datatype = "uinteger"
@@ -46,7 +43,28 @@ switch_wait_time.datatype = "range(1,10)"
 switch_wait_time.default = "3"
 switch_wait_time.placeholder = "3"
 
-local interface_list = {"wan", "wwan"}
+local function get_wan_interfaces()
+    local interfaces = {}
+    local network = require "luci.model.network".init()
+    local wan_devices = network:get_wan_devices()
+    if wan_devices then
+        for _, dev in ipairs(wan_devices) do
+            local ifcs = dev:get_interfaces()
+            if ifcs then
+                for _, ifc in ipairs(ifcs) do
+                    table.insert(interfaces, ifc:name())
+                end
+            end
+        end
+    end
+    -- As a fallback, add some common interface names
+    if #interfaces == 0 then
+        return {"wan", "wan2", "wwan", "eth0.2"}
+    end
+    return interfaces
+end
+
+local interface_list = get_wan_interfaces()
 
 interfaces_s = m:section(TypedSection, "interface", "接口配置",
     "配置网络接口用于切换。接口按优先级顺序使用(metric值越小优先级越高)。设置主接口用于自动切换的默认选择。")
