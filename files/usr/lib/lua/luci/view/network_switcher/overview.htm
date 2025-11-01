@@ -1,4 +1,3 @@
-<!-- files/usr/lib/lua/luci/view/network_switcher/overview.htm -->
 <%+header%>
 
 <div class="cbi-map">
@@ -14,15 +13,11 @@
             <div class="cbi-value">
                 <label class="cbi-value-title">启用服务</label>
                 <div class="cbi-value-field">
-                    <input type="checkbox" id="enable-service" onchange="toggleService()" />
+                    <input type="checkbox" id="enable-service" />
                     <label for="enable-service">启用网络切换服务</label>
                     <div style="margin-top: 5px;">
-                        <button class="cbi-button cbi-button-reload" onclick="refreshStatus()" style="margin-right: 5px;">
-                            刷新状态
-                        </button>
-                        <button class="cbi-button cbi-button-reset" onclick="restartService()">
-                            重启服务
-                        </button>
+                        <button class="cbi-button cbi-button-reload" id="refresh-btn">刷新状态</button>
+                        <button class="cbi-button cbi-button-reset" id="restart-btn">重启服务</button>
                     </div>
                 </div>
             </div>
@@ -58,21 +53,15 @@
                 <select id="interface-select" style="min-width: 150px; margin-right: 10px;">
                     <option value="">选择接口...</option>
                 </select>
-                <button class="cbi-button cbi-button-action" onclick="switchInterface()" id="switch-btn">
-                    切换到选定接口
-                </button>
-                <button class="cbi-button cbi-button-reload" onclick="loadInterfaces()" style="margin-left: 5px;" title="刷新接口列表">
-                    ↻
-                </button>
+                <button class="cbi-button cbi-button-action" id="switch-btn">切换到选定接口</button>
+                <button class="cbi-button cbi-button-reload" id="reload-interfaces-btn" title="刷新接口列表">↻</button>
             </div>
         </div>
         
         <div class="cbi-value">
             <label class="cbi-value-title">自动切换</label>
             <div class="cbi-value-field">
-                <button class="cbi-button cbi-button-positive" onclick="autoSwitch()">
-                    执行自动切换
-                </button>
+                <button class="cbi-button cbi-button-positive" id="auto-switch-btn">执行自动切换</button>
                 <span style="margin-left: 10px; color: #666;">优先使用主接口</span>
             </div>
         </div>
@@ -80,33 +69,51 @@
         <div class="cbi-value">
             <label class="cbi-value-title">网络测试</label>
             <div class="cbi-value-field">
-                <button class="cbi-button cbi-button-apply" onclick="testConnectivity()">
-                    测试网络连通性
-                </button>
+                <button class="cbi-button cbi-button-apply" id="test-btn">测试网络连通性</button>
             </div>
         </div>
     </fieldset>
     
     <fieldset class="cbi-section">
-        <legend>操作结果</legend>
-        <pre id="operation-result" style="min-height: 100px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; font-size: 12px;"></pre>
-    </fieldset>
-    
-    <fieldset class="cbi-section">
-        <legend>详细状态</legend>
-        <pre id="status-output" style="min-height: 200px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; font-size: 12px;"></pre>
+        <legend>实时日志</legend>
+        <div class="cbi-value">
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-reload" id="refresh-log-btn">刷新日志</button>
+                <button class="cbi-button cbi-button-reset" id="clear-log-btn">清空日志</button>
+                <button class="cbi-button" id="auto-refresh-btn">自动刷新: 关</button>
+            </div>
+        </div>
+        
+        <pre id="log-content" style="min-height: 400px; background: #f5f5f5; padding: 10px; border-radius: 3px; font-family: monospace; white-space: pre-wrap; overflow: auto; font-size: 12px; border: 1px solid #ddd;"></pre>
     </fieldset>
 </div>
 
-<script>
-window.onload = function() {
+<script type="text/javascript">
+var autoRefreshInterval = null;
+var isAutoRefreshing = false;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 绑定事件
+    document.getElementById('enable-service').addEventListener('change', toggleService);
+    document.getElementById('refresh-btn').addEventListener('click', refreshStatus);
+    document.getElementById('restart-btn').addEventListener('click', restartService);
+    document.getElementById('switch-btn').addEventListener('click', switchInterface);
+    document.getElementById('reload-interfaces-btn').addEventListener('click', loadInterfaces);
+    document.getElementById('auto-switch-btn').addEventListener('click', autoSwitch);
+    document.getElementById('test-btn').addEventListener('click', testConnectivity);
+    document.getElementById('refresh-log-btn').addEventListener('click', refreshLog);
+    document.getElementById('clear-log-btn').addEventListener('click', clearLog);
+    document.getElementById('auto-refresh-btn').addEventListener('click', toggleAutoRefresh);
+    
+    // 初始化
     refreshStatus();
     loadInterfaces();
-};
+    refreshLog();
+});
 
 function loadInterfaces() {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/get_configured_interfaces")%>', true);
+    xhr.open('GET', '/admin/services/network_switcher/get_configured_interfaces', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
@@ -137,11 +144,14 @@ function updateInterfaceSelect(interfaces) {
     defaultOption.textContent = '选择接口...';
     select.appendChild(defaultOption);
     
+    var autoOption = document.createElement('option');
+    autoOption.value = 'auto';
+    autoOption.textContent = '自动模式';
+    select.appendChild(autoOption);
+    
     if (interfaces && interfaces.length > 0) {
         interfaces.forEach(function(iface) {
-            if (iface && iface.trim() !== '' && 
-                !iface.includes('另一个实例') && 
-                !iface.includes('无法获取锁')) {
+            if (iface && iface.trim() !== '' && !iface.includes('另一个实例') && !iface.includes('无法获取锁')) {
                 var option = document.createElement('option');
                 option.value = iface;
                 option.textContent = iface;
@@ -167,12 +177,11 @@ function updateInterfaceSelect(interfaces) {
 
 function refreshStatus() {
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/status")%>', true);
+    xhr.open('GET', '/admin/services/network_switcher/status', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
                 var response = JSON.parse(xhr.responseText);
-                
                 updateServiceStatus(response.service);
                 
                 var statusText = response.status_output;
@@ -185,10 +194,8 @@ function refreshStatus() {
                 if (primaryMatch) {
                     document.getElementById('primary-interface').textContent = primaryMatch[1];
                 }
-                
-                document.getElementById('status-output').textContent = statusText;
-                
             } catch (e) {
+                console.error('解析状态失败:', e);
             }
         }
     };
@@ -212,23 +219,23 @@ function toggleService() {
     var enableCheckbox = document.getElementById('enable-service');
     var action = enableCheckbox.checked ? 'start' : 'stop';
     
-    showResult((enableCheckbox.checked ? "正在启动服务..." : "正在停止服务..."));
+    addLogMessage((enableCheckbox.checked ? "正在启动服务..." : "正在停止服务..."));
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/service_control")%>?action=' + action, true);
+    xhr.open('GET', '/admin/services/network_switcher/service_control?action=' + action, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
                 try {
                     var response = JSON.parse(xhr.responseText);
-                    showResult(response.message);
+                    addLogMessage(response.message);
                     setTimeout(refreshStatus, 2000);
                 } catch (e) {
-                    showResult("操作完成");
+                    addLogMessage("操作完成");
                     setTimeout(refreshStatus, 2000);
                 }
             } else {
-                showResult("操作失败");
+                addLogMessage("操作失败");
                 enableCheckbox.checked = !enableCheckbox.checked;
             }
         }
@@ -237,18 +244,18 @@ function toggleService() {
 }
 
 function restartService() {
-    showResult("正在重启服务...");
+    addLogMessage("正在重启服务...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/service_control")%>?action=restart', true);
+    xhr.open('GET', '/admin/services/network_switcher/service_control?action=restart', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
                 var response = JSON.parse(xhr.responseText);
-                showResult(response.message);
+                addLogMessage(response.message);
                 setTimeout(refreshStatus, 3000);
             } catch (e) {
-                showResult("重启完成");
+                addLogMessage("重启完成");
                 setTimeout(refreshStatus, 3000);
             }
         }
@@ -269,18 +276,18 @@ function switchInterface() {
         return;
     }
     
-    showResult("正在切换到 " + interface + "...");
+    addLogMessage("正在切换到 " + interface + "...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/switch")%>?interface=' + interface, true);
+    xhr.open('GET', '/admin/services/network_switcher/switch?interface=' + interface, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
                 var response = JSON.parse(xhr.responseText);
-                showResult(response.message);
+                addLogMessage(response.message);
                 setTimeout(refreshStatus, 2000);
             } catch (e) {
-                showResult("切换操作完成");
+                addLogMessage("切换操作完成");
                 setTimeout(refreshStatus, 2000);
             }
         }
@@ -293,18 +300,18 @@ function autoSwitch() {
         return;
     }
     
-    showResult("正在执行自动切换...");
+    addLogMessage("正在执行自动切换...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/switch")%>?interface=auto', true);
+    xhr.open('GET', '/admin/services/network_switcher/switch?interface=auto', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
                 var response = JSON.parse(xhr.responseText);
-                showResult(response.message);
+                addLogMessage(response.message);
                 setTimeout(refreshStatus, 2000);
             } catch (e) {
-                showResult("自动切换完成");
+                addLogMessage("自动切换完成");
                 setTimeout(refreshStatus, 2000);
             }
         }
@@ -313,18 +320,18 @@ function autoSwitch() {
 }
 
 function testConnectivity() {
-    showResult("正在测试网络...");
+    addLogMessage("正在测试网络...");
     
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/services/network_switcher/test")%>', true);
+    xhr.open('GET', '/admin/services/network_switcher/test', true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
                 var response = JSON.parse(xhr.responseText);
-                showResult(response.output);
+                addLogMessage(response.output);
                 setTimeout(refreshStatus, 1000);
             } catch (e) {
-                showResult("测试完成");
+                addLogMessage("测试完成");
                 setTimeout(refreshStatus, 1000);
             }
         }
@@ -332,12 +339,62 @@ function testConnectivity() {
     xhr.send();
 }
 
-function showResult(message) {
-    var resultElement = document.getElementById('operation-result');
-    resultElement.textContent = message;
-    resultElement.scrollTop = resultElement.scrollHeight;
+function refreshLog() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/admin/services/network_switcher/get_log', true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4 && xhr.status === 200) {
+            var logElement = document.getElementById('log-content');
+            logElement.textContent = xhr.responseText;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+    };
+    xhr.send();
 }
 
+function clearLog() {
+    if (confirm('确定要清空日志吗?')) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/admin/services/network_switcher/clear_log', true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) {
+                    var response = JSON.parse(xhr.responseText);
+                    addLogMessage(response.message);
+                    refreshLog();
+                } else {
+                    addLogMessage('清空日志失败');
+                }
+            }
+        };
+        xhr.send();
+    }
+}
+
+function toggleAutoRefresh() {
+    var button = document.getElementById('auto-refresh-btn');
+    
+    if (isAutoRefreshing) {
+        clearInterval(autoRefreshInterval);
+        button.textContent = '自动刷新: 关';
+        button.classList.remove('cbi-button-positive');
+        isAutoRefreshing = false;
+    } else {
+        autoRefreshInterval = setInterval(refreshLog, 2000);
+        button.textContent = '自动刷新: 开';
+        button.classList.add('cbi-button-positive');
+        isAutoRefreshing = true;
+    }
+}
+
+function addLogMessage(message) {
+    var logElement = document.getElementById('log-content');
+    var timestamp = new Date().toLocaleString();
+    logElement.textContent += '[' + timestamp + '] ' + message + '\n';
+    logElement.scrollTop = logElement.scrollHeight;
+}
+
+// 每30秒刷新状态
 setInterval(refreshStatus, 30000);
 </script>
 
