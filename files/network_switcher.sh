@@ -28,9 +28,17 @@ read_uci_config() {
     PING_SUCCESS_COUNT=$(uci -q get network_switcher.settings.ping_success_count || echo "1")
     [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
-    PING_TARGETS=$(uci -q get network_switcher.settings.ping_targets | tr ' ' '\n' | sed '/^$/d' | tr '\n' ' ')
-    
-    # 如果仍然为空，使用默认值
+    # More robust way to read UCI list into a space-separated string
+    local targets
+    local IFS_bak="$IFS"
+    IFS=$'\n'
+    targets=$(uci -q get network_switcher.settings.ping_targets)
+    if [ -n "$targets" ]; then
+        PING_TARGETS=$(echo $targets)
+    fi
+    IFS="$IFS_bak"
+
+    # Fallback to default if still empty
     if [ -z "$PING_TARGETS" ]; then
         PING_TARGETS="8.8.8.8 1.1.1.1 223.5.5.5"
     fi
@@ -568,47 +576,54 @@ test_connectivity() {
     log "=== 网络连通性测试 ===" "INFO"
     log "测试目标: $PING_TARGETS" "INFO"
     log "Ping次数: $PING_COUNT, 超时: ${PING_TIMEOUT}s" "INFO"
-    
+    log "要求成功次数: $PING_SUCCESS_COUNT" "INFO"
+
     if [ $INTERFACE_COUNT -eq 0 ]; then
         log "未配置任何网络接口" "WARN"
         return
     fi
-    
+
     for interface in $INTERFACES; do
-        log "测试接口: $interface" "INFO"
+        log "--- 测试接口: $interface ---" "INFO"
         local device=$(get_interface_device "$interface")
-        
-        if [ -z "$device" ]; then
-            log "  ✗ 接口未就绪" "WARN"
+
+        if [ -z "$device" ]; {
+            log "  [状态] ✗ 接口未就绪" "WARN"
             continue
-        fi
-        
-        log "  设备: $device" "INFO"
-        
+        }
+
+        log "  [状态] ✓ 接口就绪 (设备: $device)" "INFO"
+
         if is_interface_available "$interface"; then
-            log "  Ping测试:" "INFO"
+            log "  [Ping 测试]" "INFO"
             
-            local connected=0
+            local success_count=0
+            local total_targets=$(echo "$PING_TARGETS" | wc -w)
+
             for target in $PING_TARGETS; do
-                log "    $target ... " "INFO"
                 if ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target" >/dev/null 2>&1; then
-                    log "    ✓ 成功" "INFO"
-                    connected=1
-                    break
+                    log "    ✓ $target: 成功" "INFO"
+                    success_count=$((success_count + 1))
                 else
-                    log "    ✗ 失败" "INFO"
+                    log "    ✗ $target: 失败" "INFO"
                 fi
             done
+
+            log "  [结果]" "INFO"
+            log "    - 成功: $success_count" "INFO"
+            log "    - 失败: $((total_targets - success_count))" "INFO"
+            log "    - 总计: $total_targets" "INFO"
             
-            if [ $connected -eq 1 ]; then
-                log "  总体结果: ✓ 通过" "INFO"
+            if [ $success_count -ge $PING_SUCCESS_COUNT ]; then
+                log "  [结论] ✓ 通过 (成功次数 $success_count >= 要求次数 $PING_SUCCESS_COUNT)" "INFO"
             else
-                log "  总体结果: ✗ 失败" "INFO"
+                log "  [结论] ✗ 失败 (成功次数 $success_count < 要求次数 $PING_SUCCESS_COUNT)" "INFO"
             fi
         else
-            log "  接口不可用" "WARN"
+            log "  [状态] ✗ 接口不可用 (无活动链接或网关)" "WARN"
         fi
     done
+    log "=== 测试完成 ===" "INFO"
 }
 
 
