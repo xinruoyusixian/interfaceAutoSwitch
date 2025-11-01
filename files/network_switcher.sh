@@ -243,26 +243,16 @@ service_control() {
             
             cleanup_stale_processes
             
-            if ! acquire_lock; then
-                echo "无法获取锁，请稍后重试"
-                return 1
+            if [ -f "$PID_FILE" ] && [ -d "/proc/$(cat "$PID_FILE")" ]; then
+                echo "服务已在运行 (PID: $(cat "$PID_FILE"))"
+                return 0
             fi
             
             read_uci_config
             
             if [ $INTERFACE_COUNT -eq 0 ]; then
                 echo "错误: 未配置任何有效的网络接口"
-                release_lock
                 return 1
-            fi
-            
-            if [ -f "$PID_FILE" ]; then
-                local pid=$(cat "$PID_FILE")
-                if [ -d "/proc/$pid" ]; then
-                    echo "服务已在运行 (PID: $pid)"
-                    release_lock
-                    return 0
-                fi
             fi
             
             mkdir -p /var/lock /var/log /var/state /var/run
@@ -278,19 +268,12 @@ service_control() {
                 echo "服务启动成功 (PID: $pid)"
             else
                 echo "服务启动失败"
-                release_lock
+                rm -f "$PID_FILE"
                 return 1
             fi
-            
-            release_lock
             ;;
         "stop")
             echo "正在停止网络切换服务..."
-            
-            if ! acquire_lock; then
-                echo "无法获取锁，请稍后重试"
-                return 1
-            fi
             
             cleanup_stale_processes
             
@@ -315,11 +298,12 @@ service_control() {
                 echo "服务未运行"
             fi
             
-            release_lock
             echo "服务停止完成"
             ;;
         "restart")
             echo "正在重启网络切换服务..."
+            acquire_lock
+            trap release_lock EXIT
             service_control stop
             sleep 2
             service_control start
@@ -348,7 +332,6 @@ service_control() {
 }
 
 get_configured_interfaces() {
-    read_uci_config
     for iface in $INTERFACES; do
         echo "$iface"
     done
@@ -479,8 +462,6 @@ switch_interface() {
 }
 
 auto_switch() {
-    read_uci_config
-    
     if [ "$ENABLED" != "1" ]; then
         echo "服务未启用"
         return 0
@@ -532,8 +513,6 @@ auto_switch() {
 }
 
 show_status() {
-    read_uci_config
-    
     echo "=== 网络切换器状态 ==="
     echo "服务状态: $(service_control status)"
     echo "检查间隔: ${CHECK_INTERVAL}秒"
@@ -585,8 +564,6 @@ show_status() {
 }
 
 test_connectivity() {
-    read_uci_config
-    
     echo "=== 网络连通性测试 ==="
     echo "测试目标: $PING_TARGETS"
     echo "Ping次数: $PING_COUNT, 超时: ${PING_TIMEOUT}s, 成功要求: ${PING_SUCCESS_COUNT}个目标"
@@ -687,12 +664,7 @@ check_schedule() {
 
 # 在 run_daemon 函数中添加定时任务检查
 run_daemon() {
-    if ! acquire_lock_non_blocking; then
-        log "守护进程已在运行" "SERVICE"
-        exit 1
-    fi
-    
-    trap 'log "收到信号，退出守护进程" "SERVICE"; release_lock; exit 0' TERM INT
+    trap 'log "收到信号，退出守护进程" "SERVICE"; rm -f "$PID_FILE"; exit 0' TERM INT
     
     log "启动守护进程" "SERVICE"
 
@@ -702,6 +674,12 @@ run_daemon() {
         read_uci_config
         
         if [ "$ENABLED" = "1" ] && [ $INTERFACE_COUNT -gt 0 ]; then
+            if ! acquire_lock_non_blocking; then
+                log "无法获取锁，跳过此次检查" "DEBUG"
+                sleep "$CHECK_INTERVAL"
+                continue
+            fi
+
             # 每分钟检查一次定时任务
             local current_time=$(date +%s)
             if [ $((current_time - last_schedule_check)) -ge 59 ]; then
@@ -710,6 +688,8 @@ run_daemon() {
             else
                 auto_switch
             fi
+
+            release_lock
         else
             log "服务已禁用或无接口配置，退出守护进程" "SERVICE"
             break
@@ -720,6 +700,8 @@ run_daemon() {
 }
 
 main() {
+    read_uci_config
+
     case "$1" in
         start|stop|restart)
             service_control "$1"
@@ -729,14 +711,14 @@ main() {
             ;;
         auto)
             acquire_lock
-            trap release_lock EXIT
             auto_switch
+            release_lock
             ;;
         switch)
             if [ -n "$2" ]; then
                 acquire_lock
-                trap release_lock EXIT
                 switch_interface "$2"
+                release_lock
             else
                 echo "用法: $0 switch <接口名>"
                 echo "可用接口:"
