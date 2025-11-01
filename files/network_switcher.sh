@@ -53,6 +53,7 @@ read_uci_config() {
         
         local enabled=$(uci -q get network_switcher.$section.enabled || echo "1")
         local interface=$(uci -q get network_switcher.$section.interface)
+        local device=$(uci -q get network_switcher.$section.device)
         local primary=$(uci -q get network_switcher.$section.primary || echo "0")
         
         if [ "$enabled" = "1" ] && [ -n "$interface" ]; then
@@ -75,6 +76,7 @@ read_uci_config() {
     while uci -q get "network_switcher.@interface[$section_index]" >/dev/null 2>&1; do
         local enabled=$(uci -q get "network_switcher.@interface[$section_index].enabled" || echo "1")
         local interface=$(uci -q get "network_switcher.@interface[$section_index].interface")
+        local device=$(uci -q get "network_switcher.@interface[$section_index].device")
         local primary=$(uci -q get "network_switcher.@interface[$section_index].primary" || echo "0")
         
         if [ "$enabled" = "1" ] && [ -n "$interface" ]; then
@@ -354,6 +356,9 @@ get_configured_interfaces() {
 
 get_interface_device() {
     local interface="$1"
+    local device=$(uci -q get network_switcher.$interface.device)
+    [ -n "$device" ] && echo "$device" && return
+
     ubus call network.interface.$interface status 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null
 }
 
@@ -400,12 +405,6 @@ test_network_connectivity() {
 switch_interface() {
     local target_interface="$1"
     
-    if ! acquire_lock; then
-        echo "另一个实例正在运行，无法执行切换"
-        return 1
-    fi
-    trap release_lock RETURN
-
     echo "开始切换到: $target_interface"
     log "开始切换到: $target_interface" "SWITCH"
     
@@ -726,15 +725,17 @@ main() {
             service_control "$1"
             ;;
         daemon)
-            acquire_lock
-            trap release_lock EXIT
             run_daemon
             ;;
         auto)
+            acquire_lock
+            trap release_lock EXIT
             auto_switch
             ;;
         switch)
             if [ -n "$2" ]; then
+                acquire_lock
+                trap release_lock EXIT
                 switch_interface "$2"
             else
                 echo "用法: $0 switch <接口名>"

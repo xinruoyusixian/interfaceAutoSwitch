@@ -45,22 +45,21 @@ switch_wait_time.placeholder = "3"
 
 local function get_wan_interfaces()
     local interfaces = {}
-    local network = require "luci.model.network".init()
-    local wan_devices = network:get_wan_devices()
-    if wan_devices then
-        for _, dev in ipairs(wan_devices) do
-            local ifcs = dev:get_interfaces()
-            if ifcs then
-                for _, ifc in ipairs(ifcs) do
-                    table.insert(interfaces, ifc:name())
-                end
-            end
+    uci:foreach("network", "interface", function(s)
+        -- A simple check for what might be a WAN interface.
+        -- This is not perfect but is more robust than the previous method.
+        -- We're looking for interfaces that have a gateway.
+        local proto = s.proto
+        if proto and proto ~= "none" and proto ~= "static" then
+            table.insert(interfaces, s[".name"])
         end
-    end
-    -- As a fallback, add some common interface names
+    end)
+
     if #interfaces == 0 then
-        return {"wan", "wan2", "wwan", "eth0.2"}
+        -- Fallback to a default list if no potential WAN interfaces are found
+        return {"wan", "wan2", "wwan"}
     end
+
     return interfaces
 end
 
@@ -79,6 +78,10 @@ iface_name = interfaces_s:option(ListValue, "interface", "接口名称")
 for _, iface in ipairs(interface_list) do
     iface_name:value(iface, iface)
 end
+
+device = interfaces_s:option(Value, "device", "物理设备名 (可选)",
+    "手动指定用于ping测试的物理设备名 (例如 eth0.2)。如果留空，脚本将自动检测。")
+device.placeholder = "自动检测"
 
 metric = interfaces_s:option(Value, "metric", "优先级", 
     "metric值越小优先级越高")
