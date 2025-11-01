@@ -18,7 +18,6 @@ read_uci_config() {
     PING_COUNT=$(uci -q get network_switcher.settings.ping_count || echo "3")
     PING_TIMEOUT=$(uci -q get network_switcher.settings.ping_timeout || echo "3")
     SWITCH_WAIT_TIME=$(uci -q get network_switcher.settings.switch_wait_time || echo "3")
-    PING_SUCCESS_COUNT=$(uci -q get network_switcher.settings.ping_success_count || echo "1")
     
     # 确保数值变量有合理的默认值
     [ -z "$CHECK_INTERVAL" ] && CHECK_INTERVAL=60
@@ -426,21 +425,21 @@ switch_interface() {
         section_index=$((section_index + 1))
     done
     
-    echo "删除默认路由..."
+    log "删除默认路由..." "INFO"
     ip route del default 2>/dev/null
-    echo "添加新默认路由: via $gateway dev $device metric $metric"
+    log "添加新默认路由: via $gateway dev $device metric $metric" "INFO"
     ip route replace default via "$gateway" dev "$device" metric "$metric"
     
     # 确保 SWITCH_WAIT_TIME 有值
     local wait_time=${SWITCH_WAIT_TIME:-3}
-    echo "等待 $wait_time 秒..."
+    log "等待 $wait_time 秒..." "INFO"
     sleep "$wait_time"
     
     local current_device=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
-    echo "当前默认路由设备: $current_device"
+    log "当前默认路由设备: $current_device" "INFO"
     
     if [ "$current_device" = "$device" ]; then
-        echo "路由切换成功，测试网络连通性..."
+        log "路由切换成功，测试网络连通性..." "INFO"
         if test_network_connectivity "$target_interface"; then
             echo "切换到 $target_interface 成功"
             log "切换到 $target_interface 成功" "SWITCH"
@@ -561,51 +560,49 @@ show_status() {
 }
 
 test_connectivity() {
-    echo "=== 网络连通性测试 ==="
-    echo "测试目标: $PING_TARGETS"
-    echo "Ping次数: $PING_COUNT, 超时: ${PING_TIMEOUT}s, 成功要求: ${PING_SUCCESS_COUNT}个目标"
-    echo ""
+    log "=== 网络连通性测试 ===" "INFO"
+    log "测试目标: $PING_TARGETS" "INFO"
+    log "Ping次数: $PING_COUNT, 超时: ${PING_TIMEOUT}s" "INFO"
     
     if [ $INTERFACE_COUNT -eq 0 ]; then
-        echo "未配置任何网络接口"
+        log "未配置任何网络接口" "WARN"
         return
     fi
     
     for interface in $INTERFACES; do
-        echo "测试接口: $interface"
+        log "测试接口: $interface" "INFO"
         local device=$(get_interface_device "$interface")
         
         if [ -z "$device" ]; then
-            echo "  ✗ 接口未就绪"
+            log "  ✗ 接口未就绪" "WARN"
             continue
         fi
         
-        echo "  设备: $device"
+        log "  设备: $device" "INFO"
         
         if is_interface_available "$interface"; then
-            echo "  Ping测试:"
+            log "  Ping测试:" "INFO"
             
-            local success_count=0
+            local connected=0
             for target in $PING_TARGETS; do
-                echo -n "    $target ... "
+                log "    $target ... " "INFO"
                 if ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target" >/dev/null 2>&1; then
-                    echo "✓ 成功"
-                    success_count=$((success_count + 1))
+                    log "    ✓ 成功" "INFO"
+                    connected=1
+                    break
                 else
-                    echo "✗ 失败"
+                    log "    ✗ 失败" "INFO"
                 fi
             done
             
-            local required_count=${PING_SUCCESS_COUNT:-1}
-            if [ $success_count -ge $required_count ]; then
-                echo "  总体结果: ✓ 通过 ($success_count/$required_count)"
+            if [ $connected -eq 1 ]; then
+                log "  总体结果: ✓ 通过" "INFO"
             else
-                echo "  总体结果: ✗ 失败 ($success_count/$required_count)"
+                log "  总体结果: ✗ 失败" "INFO"
             fi
         else
-            echo "  接口不可用"
+            log "  接口不可用" "WARN"
         fi
-        echo ""
     done
 }
 
