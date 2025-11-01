@@ -129,6 +129,7 @@ schedule_enabled.default = "1"
 
 schedule_time = schedule_s:option(Value, "time", "时间", 
     "切换时间，格式: HH:MM (24小时制)")
+schedule_time.datatype = "time"
 schedule_time.default = "08:00"
 schedule_time.placeholder = "08:00"
 
