@@ -8,9 +8,6 @@ s = m:section(TypedSection, "settings", "全局设置")
 s.anonymous = true
 s.addremove = false
 
-enabled = s:option(Flag, "enabled", "启用服务", "启用网络切换服务")
-enabled.default = "1"
-
 check_interval = s:option(Value, "check_interval", "检查间隔(秒)", 
     "网络检查的时间间隔")
 check_interval.datatype = "uinteger"
@@ -46,7 +43,27 @@ switch_wait_time.datatype = "range(1,10)"
 switch_wait_time.default = "3"
 switch_wait_time.placeholder = "3"
 
-local interface_list = {"wan", "wwan"}
+local function get_wan_interfaces()
+    local interfaces = {}
+    uci:foreach("network", "interface", function(s)
+        -- A simple check for what might be a WAN interface.
+        -- This is not perfect but is more robust than the previous method.
+        -- We're looking for interfaces that have a gateway.
+        local proto = s.proto
+        if proto and proto ~= "none" and proto ~= "static" then
+            table.insert(interfaces, s[".name"])
+        end
+    end)
+
+    if #interfaces == 0 then
+        -- Fallback to a default list if no potential WAN interfaces are found
+        return {"wan", "wan2", "wwan"}
+    end
+
+    return interfaces
+end
+
+local interface_list = get_wan_interfaces()
 
 interfaces_s = m:section(TypedSection, "interface", "接口配置",
     "配置网络接口用于切换。接口按优先级顺序使用(metric值越小优先级越高)。设置主接口用于自动切换的默认选择。")
@@ -61,6 +78,10 @@ iface_name = interfaces_s:option(ListValue, "interface", "接口名称")
 for _, iface in ipairs(interface_list) do
     iface_name:value(iface, iface)
 end
+
+device = interfaces_s:option(Value, "device", "物理设备名 (可选)",
+    "手动指定用于ping测试的物理设备名 (例如 eth0.2)。如果留空，脚本将自动检测。")
+device.placeholder = "自动检测"
 
 metric = interfaces_s:option(Value, "metric", "优先级", 
     "metric值越小优先级越高")
