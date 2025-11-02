@@ -132,12 +132,6 @@ schedule_time = schedule_s:option(Value, "time", "时间",
 schedule_time.default = "08:00"
 schedule_time.placeholder = "08:00"
 
-function schedule_time.validate(self, value, section)
-    if value and not value:match("^([01][0-9]|2[0-3]):[0-5][0-9]$") then
-        return nil, "无效的时间格式，请输入 HH:MM 格式 (例如 08:30)"
-    end
-    return value
-end
 
 local target_list = {"auto"}
 for _, iface in ipairs(interface_list) do
