@@ -70,13 +70,18 @@ setup_policy_routing() {
             log "创建 nft set: ${set_name}" "POLICY_ROUTING"
             nft add set inet ${NFT_TABLE} ${set_name} { type ipv4_addr\; flags interval\; }
 
-            if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$ ]]; then
-                log "目标为 IP/CIDR，添加到 set..." "POLICY_ROUTING"
-                nft add element inet ${NFT_TABLE} ${set_name} { ${target} }
-            else
-                log "目标为域名，配置 dnsmasq nftset..." "POLICY_ROUTING"
-                echo "nftset=/${target}/4#inet#${NFT_TABLE}#${set_name}" >> /tmp/dnsmasq.d/network_switcher.conf
-            fi
+            case "$target" in
+                # IP/CIDR
+                *[0-9].[0-9]*)
+                    log "目标为 IP/CIDR，添加到 set..." "POLICY_ROUTING"
+                    nft add element inet ${NFT_TABLE} ${set_name} { ${target} }
+                    ;;
+                # Domain
+                *)
+                    log "目标为域名，配置 dnsmasq nftset..." "POLICY_ROUTING"
+                    echo "nftset=/${target}/4#inet#${NFT_TABLE}#${set_name}" >> /tmp/dnsmasq.d/network_switcher.conf
+                    ;;
+            esac
 
             log "添加 nftables 标记规则 (fwmark=${fwmark})..." "POLICY_ROUTING"
             nft add rule inet ${NFT_TABLE} ${NFT_CHAIN_PREROUTING} ip daddr @${set_name} mark set ${fwmark}
@@ -688,10 +693,10 @@ test_connectivity() {
         log "--- 测试接口: $interface ---" "INFO"
         local device=$(get_interface_device "$interface")
 
-        if [ -z "$device" ]; {
+        if [ -z "$device" ]; then
             log "  [状态] ✗ 接口未就绪" "WARN"
             continue
-        }
+        fi
 
         log "  [状态] ✓ 接口就绪 (设备: $device)" "INFO"
 
