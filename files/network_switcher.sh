@@ -11,6 +11,101 @@ LOG_FILE="/var/log/network_switcher.log"
 STATE_FILE="/var/state/network_switcher.state"
 PID_FILE="/var/run/network_switcher.pid"
 
+# Globals for policy routing
+NFT_TABLE="network_switcher"
+NFT_CHAIN_PREROUTING="ns_prerouting"
+NFT_CHAIN_POSTROUTING="ns_postrouting"
+NFT_SET_PREFIX="ns_set"
+
+flush_nftables_config() {
+    nft flush table inet ${NFT_TABLE} >/dev/null 2>&1
+    nft delete table inet ${NFT_TABLE} >/dev/null 2>&1
+}
+
+init_nftables_table_and_chains() {
+    # Create a new table
+    nft add table inet ${NFT_TABLE}
+
+    # Create prerouting and postrouting chains
+    nft add chain inet ${NFT_TABLE} ${NFT_CHAIN_PREROUTING} { type filter hook prerouting priority -150 \; }
+    nft add chain inet ${NFT_TABLE} ${NFT_CHAIN_POSTROUTING} { type nat hook postrouting priority 100 \; }
+}
+
+setup_policy_routing() {
+    log "--- 开始设置策略路由 ---" "POLICY_ROUTING"
+
+    log "清理旧的 dnsmasq 策略路由配置..." "POLICY_ROUTING"
+    rm -f /tmp/dnsmasq.d/network_switcher.conf
+    touch /tmp/dnsmasq.d/network_switcher.conf
+
+    log "清理旧的 ip rules..." "POLICY_ROUTING"
+    ip -4 rule list | grep -oP 'from all fwmark 0x[0-9a-f]+/0xffff lookup \K[0-9]+' | xargs -r -n1 ip -4 rule delete table
+
+    local enabled=$(uci -q get network_switcher.policy_routing.enabled || echo "0")
+    if [ "$enabled" != "1" ]; then
+        log "策略路由功能已禁用。正在清理所有相关规则..." "POLICY_ROUTING"
+        flush_nftables_config
+        killall -HUP dnsmasq # Reload dnsmasq to remove old config
+        log "--- 策略路由设置完成 (已禁用) ---" "POLICY_ROUTING"
+        return
+    fi
+
+    log "策略路由功能已启用。正在初始化 nftables..." "POLICY_ROUTING"
+    flush_nftables_config
+    init_nftables_table_and_chains
+
+    local rule_index=0
+    local fwmark=1
+    while uci -q get "network_switcher.@routing_rule[$rule_index]" >/dev/null 2>&1; do
+        local rule_enabled=$(uci -q get "network_switcher.@routing_rule[$rule_index].enabled" || echo "0")
+        local name=$(uci -q get "network_switcher.@routing_rule[$rule_index].name" || echo "未命名规则")
+        local target=$(uci -q get "network_switcher.@routing_rule[$rule_index].target")
+        local interface=$(uci -q get "network_switcher.@routing_rule[$rule_index].interface")
+
+        if [ "$rule_enabled" = "1" ] && [ -n "$target" ] && [ -n "$interface" ]; then
+            log "处理规则 [${name}]: 目标=${target}, 接口=${interface}" "POLICY_ROUTING"
+            local set_name="${NFT_SET_PREFIX}_${rule_index}"
+            local table_id=$((100 + rule_index))
+
+            log "创建 nft set: ${set_name}" "POLICY_ROUTING"
+            nft add set inet ${NFT_TABLE} ${set_name} { type ipv4_addr\; flags interval\; }
+
+            if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$ ]]; then
+                log "目标为 IP/CIDR，添加到 set..." "POLICY_ROUTING"
+                nft add element inet ${NFT_TABLE} ${set_name} { ${target} }
+            else
+                log "目标为域名，配置 dnsmasq nftset..." "POLICY_ROUTING"
+                echo "nftset=/${target}/4#inet#${NFT_TABLE}#${set_name}" >> /tmp/dnsmasq.d/network_switcher.conf
+            fi
+
+            log "添加 nftables 标记规则 (fwmark=${fwmark})..." "POLICY_ROUTING"
+            nft add rule inet ${NFT_TABLE} ${NFT_CHAIN_PREROUTING} ip daddr @${set_name} mark set ${fwmark}
+
+            local gateway=$(ubus call network.interface.${interface} status 2>/dev/null | jsonfilter -e '@.route[0].nexthop')
+            if [ -n "$gateway" ]; then
+                log "为接口 ${interface} 添加 ip rule 和路由 (路由表 ID=${table_id})..." "POLICY_ROUTING"
+                ip -4 rule add fwmark ${fwmark} table ${table_id}
+                ip -4 route add default via ${gateway} dev $(get_interface_device ${interface}) table ${table_id}
+
+                log "为接口 ${interface} 添加 SNAT 规则..." "POLICY_ROUTING"
+                nft add rule inet ${NFT_TABLE} ${NFT_CHAIN_POSTROUTING} oifname "$(get_interface_device ${interface})" masquerade
+            else
+                log "警告: 无法为接口 ${interface} 获取网关，跳过此规则。" "POLICY_ROUTING"
+            fi
+
+            fwmark=$((fwmark + 1))
+        else
+            log "跳过已禁用的规则 #${rule_index}" "POLICY_ROUTING"
+        fi
+        rule_index=$((rule_index + 1))
+    done
+
+    log "重载 dnsmasq 以应用域名规则..." "POLICY_ROUTING"
+    killall -HUP dnsmasq
+
+    log "--- 策略路由设置完成 ---" "POLICY_ROUTING"
+}
+
 read_uci_config() {
     ENABLED=$(uci -q get network_switcher.settings.enabled)
     [ -z "$ENABLED" ] && ENABLED=$(uci -q get network_switcher.settings.enabled || echo "1")
@@ -32,14 +127,12 @@ read_uci_config() {
     local targets
     local IFS_bak="$IFS"
     IFS=$'\n'
-    #targets=$(uci -q get network_switcher.settings.ping_targets)
-    # 直接从uci获取并处理
-    targets=$(uci -q get network_switcher.@settings[0].ping_targets 2>/dev/null)
-    if [ -n "$targets" ]; then 
+    targets=$(uci -q get network_switcher.settings.ping_targets)
+    if [ -n "$targets" ]; then
         PING_TARGETS=$(echo $targets)
     fi
     IFS="$IFS_bak"
-    echo "TEST:" $PING_TARGETS
+
     # Fallback to default if still empty
     if [ -z "$PING_TARGETS" ]; then
         PING_TARGETS="8.8.8.8 1.1.1.1 223.5.5.5"
@@ -148,6 +241,8 @@ log() {
             if [ "$level" != "ERROR" ]; then
                 return
             fi
+            ;;
+        "POLICY_ROUTING")
             ;;
         *)
             if [ "$level" = "DEBUG" ]; then
@@ -269,6 +364,8 @@ service_control() {
             
             log "启动网络切换服务" "SERVICE"
             
+            setup_policy_routing
+
             run_daemon &
             local pid=$!
             echo $pid > "$PID_FILE"
@@ -308,6 +405,8 @@ service_control() {
                 echo "服务未运行"
             fi
             
+            flush_nftables_config
+
             echo "服务停止完成"
             ;;
         "restart")
@@ -390,7 +489,6 @@ test_network_connectivity() {
             if [ $success_count -ge $PING_SUCCESS_COUNT ]; then
                 return 0 # Success
             fi
-        log "user:" "ping -I $device -c $PING_COUNT -W $PING_TIMEOUT $target"
         fi
     done
     
@@ -590,10 +688,10 @@ test_connectivity() {
         log "--- 测试接口: $interface ---" "INFO"
         local device=$(get_interface_device "$interface")
 
-        if [ -z "$device" ]; then
+        if [ -z "$device" ]; {
             log "  [状态] ✗ 接口未就绪" "WARN"
             continue
-        fi
+        }
 
         log "  [状态] ✓ 接口就绪 (设备: $device)" "INFO"
 
@@ -760,6 +858,9 @@ main() {
         cleanup)
             cleanup_stale_processes
             ;;
+        policy-routing)
+            setup_policy_routing
+            ;;
         *)
             echo "网络切换器 v1.2.4"
             echo ""
@@ -774,6 +875,7 @@ main() {
             echo "  auto        自动切换"
             echo "  switch IF   切换到接口"
             echo "  test        网络测试"
+            echo "  policy-routing 应用策略路由"
             echo "  configured_interfaces 已配置接口"
             echo "  clear_log   清空日志"
             echo "  current_interface 当前接口"
