@@ -43,6 +43,7 @@ define Package/network-switcher/install
 	
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/controller/network_switcher.lua $(1)/usr/lib/lua/luci/controller/
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/network_switcher/network_switcher.lua $(1)/usr/lib/lua/luci/model/cbi/network_switcher/
+	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/network_switcher/routing.lua $(1)/usr/lib/lua/luci/model/cbi/network_switcher/
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/view/network_switcher/overview.htm $(1)/usr/lib/lua/luci/view/network_switcher/
 endef
 
