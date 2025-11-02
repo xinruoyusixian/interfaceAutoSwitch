@@ -54,16 +54,26 @@ setup_policy_routing() {
     flush_nftables_config
     init_nftables_table_and_chains
 
+    local rules_text=$(uci -q get network_switcher.policy_routing.rules_text || echo "")
     local rule_index=0
     local fwmark=1
-    while uci -q get "network_switcher.@routing_rule[$rule_index]" >/dev/null 2>&1; do
-        local rule_enabled=$(uci -q get "network_switcher.@routing_rule[$rule_index].enabled" || echo "0")
-        local name=$(uci -q get "network_switcher.@routing_rule[$rule_index].name" || echo "未命名规则")
-        local target=$(uci -q get "network_switcher.@routing_rule[$rule_index].target")
-        local interface=$(uci -q get "network_switcher.@routing_rule[$rule_index].interface")
 
-        if [ "$rule_enabled" = "1" ] && [ -n "$target" ] && [ -n "$interface" ]; then
-            log "处理规则 [${name}]: 目标=${target}, 接口=${interface}" "POLICY_ROUTING"
+    # Use a while loop to read each line of the rules_text
+    echo "$rules_text" | while IFS= read -r line; do
+        # Trim leading/trailing whitespace
+        line=$(echo "$line" | sed 's/^[ \t]*//;s/[ \t]*$//')
+
+        # Skip empty lines and comments
+        if [ -z "$line" ] || [ "$(echo "$line" | cut -c1)" = "#" ]; then
+            continue
+        fi
+
+        # Parse target and interface
+        local target=$(echo "$line" | awk '{print $1}')
+        local interface=$(echo "$line" | awk '{print $2}')
+
+        if [ -n "$target" ] && [ -n "$interface" ]; then
+            log "处理规则 #${rule_index}: 目标=${target}, 接口=${interface}" "POLICY_ROUTING"
             local set_name="${NFT_SET_PREFIX}_${rule_index}"
             local table_id=$((100 + rule_index))
 
@@ -100,7 +110,7 @@ setup_policy_routing() {
 
             fwmark=$((fwmark + 1))
         else
-            log "跳过已禁用的规则 #${rule_index}" "POLICY_ROUTING"
+            log "跳过格式错误的规则行: '$line'" "POLICY_ROUTING"
         fi
         rule_index=$((rule_index + 1))
     done
@@ -128,15 +138,10 @@ read_uci_config() {
     PING_SUCCESS_COUNT=$(uci -q get network_switcher.settings.ping_success_count || echo "1")
     [ -z "$PING_SUCCESS_COUNT" ] && PING_SUCCESS_COUNT=1
     
-    # More robust way to read UCI list into a space-separated string
-    local targets
-    local IFS_bak="$IFS"
-    IFS=$'\n'
-    targets=$(uci -q get network_switcher.settings.ping_targets)
+    local targets=$(uci -q get network_switcher.@settings[0].ping_targets 2>/dev/null)
     if [ -n "$targets" ]; then
-        PING_TARGETS=$(echo $targets)
+        PING_TARGETS="$targets"
     fi
-    IFS="$IFS_bak"
 
     # Fallback to default if still empty
     if [ -z "$PING_TARGETS" ]; then
