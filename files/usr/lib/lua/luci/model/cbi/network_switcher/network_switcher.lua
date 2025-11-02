@@ -129,15 +129,11 @@ schedule_enabled.default = "1"
 
 schedule_time = schedule_s:option(Value, "time", "时间", 
     "切换时间，格式: HH:MM (24小时制)")
-schedule_time.datatype = "time"
 schedule_time.default = "08:00"
 schedule_time.placeholder = "08:00"
 
 function schedule_time.validate(self, value, section)
-    if not value then
-        return nil, "时间不能为空"
-    end
-    if not value:match("^([01][0-9]|2[0-3]):[0-5][0-9]$") then
+    if value and not value:match("^([01][0-9]|2[0-3]):[0-5][0-9]$") then
         return nil, "无效的时间格式，请输入 HH:MM 格式 (例如 08:30)"
     end
     return value
@@ -153,6 +149,10 @@ schedule_target = schedule_s:option(ListValue, "target", "切换目标",
 schedule_target.default = "auto"
 for _, target in ipairs(target_list) do
     schedule_target:value(target, target)
+end
+
+function m.on_after_commit(self)
+    luci.sys.call("/etc/init.d/network_switcher restart >/dev/null 2>&1")
 end
 
 return m

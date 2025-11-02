@@ -604,7 +604,6 @@ test_connectivity() {
             local total_targets=$(echo "$PING_TARGETS" | wc -w)
 
             for target in $PING_TARGETS; do
-                echo ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target"
                 if ping -I "$device" -c $PING_COUNT -W $PING_TIMEOUT "$target" >/dev/null 2>&1; then
                     log "    ✓ $target: 成功" "INFO"
                     success_count=$((success_count + 1))
