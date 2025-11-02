@@ -234,35 +234,36 @@ log() {
 
     [ -z "$LOG_LEVEL" ] && LOG_LEVEL="INFO"
 
+    local should_log=false
     case "$LOG_LEVEL" in
         "DEBUG")
+            should_log=true
             ;;
         "INFO")
-            if [ "$level" = "DEBUG" ]; then
-                return
-            fi
+            [ "$level" != "DEBUG" ] && should_log=true
             ;;
         "WARN")
-            if [ "$level" = "DEBUG" ] || [ "$level" = "INFO" ]; then
-                return
-            fi
+            [ "$level" != "DEBUG" ] && [ "$level" != "INFO" ] && should_log=true
             ;;
         "ERROR")
-            if [ "$level" != "ERROR" ]; then
-                return
-            fi
-            ;;
-        "POLICY_ROUTING")
+            [ "$level" = "ERROR" ] && should_log=true
             ;;
         *)
-            if [ "$level" = "DEBUG" ]; then
-                return
-            fi
+            # Default case for POLICY_ROUTING, SERVICE, etc.
+            [ "$level" != "DEBUG" ] && should_log=true
             ;;
     esac
 
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    if [ "$should_log" = "true" ]; then
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        local log_entry="[$level] $message"
+
+        # Write to local log file
+        echo "[$timestamp] $log_entry" >> "$LOG_FILE"
+
+        # Write to system log
+        logger -t "network_switcher" "$log_entry"
+    fi
 }
 
 acquire_lock_silent() {
