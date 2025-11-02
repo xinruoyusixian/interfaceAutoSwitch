@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=network-switcher
-PKG_VERSION:=1.2.4
+PKG_VERSION:=1.2.3
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Your Name <your@email.com>
@@ -50,6 +50,9 @@ endef
 define Package/network-switcher/postinst
 #!/bin/sh
 if [ -z "$${IPKG_INSTROOT}" ]; then
+    # Clean up LuCI cache
+    rm -f /tmp/luci-indexcache
+
     echo "启用network_switcher服务..."
     /etc/init.d/network_switcher enable
     echo "你可以在LuCI中配置网络切换器: 服务 -> 网络切换器"
