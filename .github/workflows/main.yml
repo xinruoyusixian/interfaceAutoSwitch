@@ -1,19 +1,11 @@
-name: 插件编译
+name: Build OpenWrt Network Switcher Plugin
 
 on:
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: 'Release tag (e.g., v1.0.0)'
-        required: true
-        default: 'v1.0.0'
-      release_title:
-        description: 'Release title'
-        required: true
-        default: 'Network Switcher Plugin'
 
 env:
   PACKAGE_NAME: network-switcher
+  PACKAGE_VERSION: "1.0.0"
 
 jobs:
   build:
@@ -105,8 +97,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
+    if: github.event_name == 'release'
     
     steps:
     - name: Download all artifacts
@@ -114,43 +105,29 @@ jobs:
       with:
         path: dist
 
-    - name: Display downloaded files
+    - name: Create release package
       run: |
-        echo "=== Downloaded artifacts structure ==="
-        find dist -type f -name "*.ipk" | sort
-        echo "=== Total IPK files ==="
-        find dist -name "*.ipk" | wc -l
+        mkdir -p release_packages
+        find dist -name "*.ipk" -exec cp {} release_packages/ \;
 
-    - name: Create Release
+        # 创建包说明文件 - 使用简单的echo命令避免多行字符串问题
+        echo "Network Switcher Plugin for OpenWrt/ImmortalWrt" > release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "This package provides intelligent network interface switching with LuCI web interface." >> release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "Installation:" >> release_packages/README.txt
+        echo "1. Upload the appropriate IPK file for your device architecture" >> release_packages/README.txt
+        echo "2. Install using: opkg install <package-name>.ipk" >> release_packages/README.txt
+        echo "3. Access via LuCI: Services -> Network Switcher" >> release_packages/README.txt
+        echo "" >> release_packages/README.txt
+        echo "Supported architectures:" >> release_packages/README.txt
+        echo "- x86-64: For x86 64-bit devices" >> release_packages/README.txt
+        echo "- aarch64_generic: For ARM 64-bit devices" >> release_packages/README.txt
+
+        # 创建zip包
+        zip -r ${{ env.PACKAGE_NAME }}-${{ github.event.release.tag_name }}.zip release_packages/
+
+    - name: Upload to release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ github.event.inputs.release_tag }}
-        name: ${{ github.event.inputs.release_title }}
-        body: |
-          # Network Switcher Plugin for OpenWrt/ImmortalWrt
-          
-          This package provides intelligent network interface switching with automatic failover and LuCI web interface.
-          
-          ## Installation
-          
-          1. Upload the appropriate IPK file for your device architecture
-          2. Install using: `opkg install <package-name>.ipk`
-          3. Access via LuCI: Services → Network Switcher
-          
-          ## Supported Architectures
-          
-          - **x86-64**: For x86 64-bit devices
-          - **aarch64_generic**: For ARM 64-bit devices (Rockchip, etc.)
-          
-          ## Features
-          
-          - Automatic network interface failover
-          - Ping-based connectivity monitoring
-          - Scheduled switching
-          - LuCI web interface configuration
-          
-          Built from commit: ${{ github.sha }}
-        draft: false
-        prerelease: false
-        files: |
-          dist/**/*.ipk
+        files: ${{ env.PACKAGE_NAME }}-${{ github.event.release.tag_name }}.zip
