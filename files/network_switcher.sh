@@ -32,12 +32,14 @@ read_uci_config() {
     local targets
     local IFS_bak="$IFS"
     IFS=$'\n'
-    targets=$(uci -q get network_switcher.settings.ping_targets)
-    if [ -n "$targets" ]; then
+    #targets=$(uci -q get network_switcher.settings.ping_targets)
+    # 直接从uci获取并处理
+    targets=$(uci -q get network_switcher.@settings[0].ping_targets 2>/dev/null)
+    if [ -n "$targets" ]; then 
         PING_TARGETS=$(echo $targets)
     fi
     IFS="$IFS_bak"
-
+    echo "TEST:" $PING_TARGETS
     # Fallback to default if still empty
     if [ -z "$PING_TARGETS" ]; then
         PING_TARGETS="8.8.8.8 1.1.1.1 223.5.5.5"
@@ -388,6 +390,7 @@ test_network_connectivity() {
             if [ $success_count -ge $PING_SUCCESS_COUNT ]; then
                 return 0 # Success
             fi
+        log "user:" "ping -I $device -c $PING_COUNT -W $PING_TIMEOUT $target"
         fi
     done
     
@@ -587,10 +590,10 @@ test_connectivity() {
         log "--- 测试接口: $interface ---" "INFO"
         local device=$(get_interface_device "$interface")
 
-        if [ -z "$device" ]; {
+        if [ -z "$device" ]; then
             log "  [状态] ✗ 接口未就绪" "WARN"
             continue
-        }
+        fi
 
         log "  [状态] ✓ 接口就绪 (设备: $device)" "INFO"
 
