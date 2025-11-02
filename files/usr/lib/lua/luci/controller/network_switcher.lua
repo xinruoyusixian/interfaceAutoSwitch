@@ -9,6 +9,7 @@ function index()
     entry({"admin", "services", "network_switcher"}, firstchild(), "网络切换器", 60).dependent = false
     entry({"admin", "services", "network_switcher", "overview"}, template("network_switcher/overview"), "概览", 1)
     entry({"admin", "services", "network_switcher", "settings"}, cbi("network_switcher/network_switcher"), "设置", 2)
+    entry({"admin", "services", "network_switcher", "routing"}, cbi("network_switcher/routing"), "策略路由", 3)
     
     entry({"admin", "services", "network_switcher", "status"}, call("action_status")).leaf = true
     entry({"admin", "services", "network_switcher", "switch"}, call("action_switch")).leaf = true
