@@ -84,6 +84,7 @@
 var autoRefreshInterval = null;
 var isAutoRefreshing = false;
 var baseUrl = '<%=luci.dispatcher.build_url("admin", "services", "network_switcher")%>';
+console.log('Base URL:', baseUrl);
 
 document.addEventListener('DOMContentLoaded', function() {
     // 绑定事件
@@ -238,8 +239,11 @@ function toggleService() {
 function restartService() {
     addLogMessage("正在重启服务...");
     
+    var url = baseUrl + '/service_control?action=restart';
+    console.log('Restarting service with URL:', url);
+
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', baseUrl + '/service_control?action=restart', true);
+    xhr.open('GET', url, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -270,8 +274,11 @@ function switchInterface() {
     
     addLogMessage("正在切换到 " + interface + "...");
     
+    var url = baseUrl + '/switch?interface=' + interface;
+    console.log('Switching interface with URL:', url);
+
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', baseUrl + '/switch?interface=' + interface, true);
+    xhr.open('GET', url, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
@@ -290,8 +297,11 @@ function switchInterface() {
 function testConnectivity() {
     addLogMessage("正在测试网络...");
     
+    var url = baseUrl + '/test';
+    console.log('Testing connectivity with URL:', url);
+
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', baseUrl + '/test', true);
+    xhr.open('GET', url, true);
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4 && xhr.status === 200) {
             try {
