@@ -16,6 +16,17 @@ s = m:section(TypedSection, "settings", "全局设置")
 s.anonymous = true
 s.addremove = false
 
+-- Add the main enabled flag
+s:option(Flag, "enabled", "启用网络切换器", "这是插件的总开关。关闭后，所有自动切换和监控将停止。").default = 0
+
+-- Add the log level option
+local log_level = s:option(ListValue, "log_level", "日志级别", "设置插件记录日志的详细程度。")
+log_level:value("DEBUG", "调试 (Debug)")
+log_level:value("INFO", "信息 (Info)")
+log_level:value("WARN", "警告 (Warn)")
+log_level:value("ERROR", "错误 (Error)")
+log_level.default = "INFO"
+
 check_interval = s:option(Value, "check_interval", "检查间隔(秒)", 
     "网络检查的时间间隔")
 check_interval.datatype = "uinteger"
