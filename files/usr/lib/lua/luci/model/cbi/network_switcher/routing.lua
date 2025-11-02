@@ -33,48 +33,8 @@ rules_option.wrap = "off"
 rules_option.description = "在此处输入所有路由规则，每行一条，格式为: <目标> <接口>"
 
 -- 在 on_after_commit 中处理文本到UCI的转换
-function m.on_after_commit(self)
-    -- 首先，清除所有旧的 routing_rule section
-    while uci:get("network_switcher", uci:get_first("network_switcher", "routing_rule")) do
-        uci:delete("network_switcher", uci:get_first("network_switcher", "routing_rule"))
-    end
-
-    -- 读取 TextValue 的内容
-    local rules_text = self:formvalue("cbid.network_switcher.policy_routing.rules_text") or ""
-
-    -- 逐行解析并创建新的 routing_rule section
-    local rule_index = 0
-    for line in (rules_text .. "\n"):gmatch("(.-)\n") do
-        -- trim whitespace and ignore comments/empty lines
-        line = line:gsub("^%s+", ""):gsub("%s+$", "")
-        if #line > 0 and not line:match("^#") then
-            local target, interface = line:match("([^%s]+)%s+([^%s]+)")
-            if target and interface then
-                local section_name = uci:add("network_switcher", "routing_rule")
-                uci:set("network_switcher", section_name, "target", target)
-                uci:set("network_switcher", section_name, "interface", interface)
-                -- 默认设置为启用
-                uci:set("network_switcher", section_name, "enabled", "1")
-                uci:set("network_switcher", section_name, "name", "规则 " .. (rule_index + 1))
-                rule_index = rule_index + 1
-            end
-        end
-    end
-
-    -- 保存更改
-    uci:save("network_switcher")
-    uci:commit("network_switcher")
-
-    -- 重新加载服务
-    -- 使用异步方式调用，防止UI超时
-    fs.write("/tmp/network_switcher_restart.sh", "#!/bin/sh\n/etc/init.d/network_switcher policy-routing\n")
-    sys.call("chmod +x /tmp/network_switcher_restart.sh")
-    sys.call("/tmp/network_switcher_restart.sh >/dev/null 2>&1 &")
-end
-
-
-function m.on_init(self)
-    -- 从UCI配置中读取所有 routing_rule 并组合成文本
+-- cfgvalue function to populate the textarea from UCI sections
+function rules_option.cfgvalue(self, section)
     local rules = {}
     uci:foreach("network_switcher", "routing_rule", function(s)
         local target = s.target
@@ -83,9 +43,44 @@ function m.on_init(self)
             table.insert(rules, string.format("%s %s", target, interface))
         end
     end)
+    return table.concat(rules, "\n")
+end
 
-    -- 设置 TextValue 的初始值
-    self:formvalue("cbid.network_switcher.policy_routing.rules_text", table.concat(rules, "\n"))
+-- on_after_commit is now write_json, which is a more standard way for TextValue
+function rules_option.write(self, section, value)
+    -- First, clear all old routing_rule sections
+    while uci:get("network_switcher", uci:get_first("network_switcher", "routing_rule")) do
+        uci:delete("network_switcher", uci:get_first("network_switcher", "routing_rule"))
+    end
+
+    -- Parse each line from the textarea value and create new sections
+    local rule_index = 0
+    for line in (value .. "\n"):gmatch("(.-)\n") do
+        line = line:gsub("^%s+", ""):gsub("%s+$", "")
+        if #line > 0 and not line:match("^#") then
+            local target, interface = line:match("([^%s]+)%s+([^%s]+)")
+            if target and interface then
+                local section_name = uci:add("network_switcher", "routing_rule")
+                uci:set("network_switcher", section_name, "target", target)
+                uci:set("network_switcher", section_name, "interface", interface)
+                uci:set("network_switcher", section_name, "enabled", "1")
+                uci:set("network_switcher", section_name, "name", "Rule " .. (rule_index + 1))
+                rule_index = rule_index + 1
+            end
+        end
+    end
+    -- We don't need to call uci:save/commit here, CBI handles it
+end
+
+function m.on_after_commit(self)
+    -- Need to commit the changes made in rules_option.write
+    uci:save("network_switcher")
+    uci:commit("network_switcher")
+
+    -- Reload service asynchronously
+    fs.write("/tmp/network_switcher_restart.sh", "#!/bin/sh\n/etc/init.d/network_switcher policy-routing\n")
+    sys.call("chmod +x /tmp/network_switcher_restart.sh")
+    sys.call("/tmp/network_switcher_restart.sh >/dev/null 2>&1 &")
 end
 
 return m
