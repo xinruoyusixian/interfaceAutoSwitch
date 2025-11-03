@@ -1,87 +1,70 @@
 -- files/usr/lib/lua/luci/model/cbi/network_switcher/routing.lua
 local uci = require("luci.model.uci").cursor()
-local sys = require("luci.sys")
-local fs = require("nixio.fs")
 
-m = Map("network_switcher", "策略路由",
-    "<h3>策略路由说明</h3>" ..
-    "<p>此功能允许您将特定的网络流量通过指定的接口路由出去。</p>" ..
-    "<ol>" ..
-    "<li><b>启用策略路由:</b> 首先启用下方的“启用策略路由”开关。</li>" ..
-    "<li><b>批量添加规则:</b> 在下方的文本框中输入您的路由规则，每行一条。</li>" ..
-    "<li><b>规则格式:</b> 每行格式为 <code>&lt;目标地址&gt; &lt;出口接口&gt;</code>，用空格或Tab分隔。例如:</li>" ..
-    "<ul>" ..
-    "<li><code>192.168.100.10 wan</code></li>" ..
-    "<li><code>example.com wwan</code></li>" ..
-    "<li><code>*.google.com wan</code></li>" ..
-    "<li><code>10.0.0.0/8 wwan</code></li>" ..
-    "</ul>" ..
-    "<li><b>保存与应用:</b> 点击“保存并应用”后，系统将自动重载防火墙和相关服务以使规则生效。</li>" ..
-    "</ol>")
+m = Map("network_switcher", "策略路由")
 
--- 全局策略路由设置
+m.description = '<div class="cbi-section-description">' ..
+    '<h3>策略路由说明</h3>' ..
+    '<p>此功能允许您将特定的网络流量通过指定的接口路由出去。</p>' ..
+    '<h4>使用步骤：</h4>' ..
+    '<ol>' ..
+    '<li>启用下方的"启用策略路由"开关</li>' ..
+    '<li>在下方的文本框中输入路由规则，每行一条</li>' ..
+    '<li>规则格式：<code>&lt;目标地址&gt; &lt;出口接口&gt;</code></li>' ..
+    '<li>点击"保存并应用"使规则生效</li>' ..
+    '</ol>' ..
+    '<h4>示例：</h4>' ..
+    '<ul>' ..
+    '<li><code>192.168.100.10 wan</code></li>' ..
+    '<li><code>example.com wwan</code></li>' ..
+    '<li><code>10.0.0.0/8 wwan</code></li>' ..
+    '</ul>' ..
+    '</div>'
+
 s = m:section(TypedSection, "policy_routing", "全局设置")
 s.anonymous = true
 s.addremove = false
 
-s:option(Flag, "enabled", "启用策略路由", "启用或禁用所有策略路由规则。")
+s:option(Flag, "enabled", "启用策略路由", "启用或禁用所有策略路由规则")
 
--- 路由规则文本框
-local rules_option = s:option(TextValue, "rules_text", "路由规则 (批量编辑)")
+local rules_option = s:option(TextValue, "rules_text", "路由规则")
 rules_option.rows = 15
 rules_option.wrap = "off"
-rules_option.description = "在此处输入所有路由规则，每行一条，格式为: <目标> <接口>"
+rules_option.description = "在此处输入所有路由规则，每行一条。格式：目标地址 出口接口"
 
--- This function is called by CBI to get the initial value for the textarea.
--- It reads all existing 'routing_rule' sections from UCI and formats them into a single string.
 function rules_option.cfgvalue(self, section)
     local rules = {}
-    uci:foreach("network_switcher", "routing_rule", function(s)
-        local target = s.target
-        local interface = s.interface
-        if target and interface then
-            table.insert(rules, string.format("%s %s", target, interface))
+    uci:foreach("network_switcher", "routing_rule", 
+        function(s)
+            if s.target and s.interface then
+                table.insert(rules, s.target .. " " .. s.interface)
+            end
         end
-    end)
+    )
     return table.concat(rules, "\n")
 end
 
--- This function is called by CBI when the form is submitted.
--- It takes the string from the textarea, parses it, and writes the values back to UCI 'routing_rule' sections.
 function rules_option.write(self, section, value)
-    -- First, clear all old routing_rule sections to ensure a clean slate.
-    while uci:get("network_switcher", uci:get_first("network_switcher", "routing_rule")) do
-        uci:delete("network_switcher", uci:get_first("network_switcher", "routing_rule"))
-    end
-
-    -- Parse each line from the textarea and create new UCI sections.
-    local rule_index = 0
-    for line in (value .. "\n"):gmatch("(.-)\n") do
-        line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    uci:delete_all("network_switcher", "routing_rule")
+    
+    local index = 1
+    for line in value:gmatch("[^\r\n]+") do
+        line = line:gsub("^%s*(.-)%s*$", "%1")
         if #line > 0 and not line:match("^#") then
-            local target, interface = line:match("([^%s]+)%s+([^%s]+)")
+            local target, interface = line:match("^(%S+)%s+(%S+)$")
             if target and interface then
-                local section_name = uci:add("network_switcher", "routing_rule")
-                uci:set("network_switcher", section_name, "target", target)
-                uci:set("network_switcher", section_name, "interface", interface)
-                uci:set("network_switcher", section_name, "enabled", "1")
-                uci:set("network_switcher", section_name, "name", "Rule " .. (rule_index + 1))
-                rule_index = rule_index + 1
+                uci:set("network_switcher", "rule_" .. index, "routing_rule")
+                uci:set("network_switcher", "rule_" .. index, "target", target)
+                uci:set("network_switcher", "rule_" .. index, "interface", interface)
+                uci:set("network_switcher", "rule_" .. index, "enabled", "1")
+                index = index + 1
             end
         end
     end
 end
 
--- This hook is executed after all data from the form has been written to UCI.
 function m.on_after_commit(self)
-    -- Explicitly save and commit the changes to the 'network_switcher' config file.
-    uci:save("network_switcher")
-    uci:commit("network_switcher")
-
-    -- Asynchronously restart the service to apply the new rules without blocking the UI.
-    fs.write("/tmp/network_switcher_restart.sh", "#!/bin/sh\n/etc/init.d/network_switcher policy-routing\n")
-    sys.call("chmod +x /tmp/network_switcher_restart.sh")
-    sys.call("/tmp/network_switcher_restart.sh >/dev/null 2>&1 &")
+    os.execute("(sleep 2 && /etc/init.d/network_switcher policy-routing) >/dev/null 2>&1 &")
 end
 
 return m
