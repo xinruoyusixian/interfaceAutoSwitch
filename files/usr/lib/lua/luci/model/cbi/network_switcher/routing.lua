@@ -32,8 +32,8 @@ rules_option.rows = 15
 rules_option.wrap = "off"
 rules_option.description = "在此处输入所有路由规则，每行一条，格式为: <目标> <接口>"
 
--- 在 on_after_commit 中处理文本到UCI的转换
--- cfgvalue function to populate the textarea from UCI sections
+-- This function is called by CBI to get the initial value for the textarea.
+-- It reads all existing 'routing_rule' sections from UCI and formats them into a single string.
 function rules_option.cfgvalue(self, section)
     local rules = {}
     uci:foreach("network_switcher", "routing_rule", function(s)
@@ -46,14 +46,15 @@ function rules_option.cfgvalue(self, section)
     return table.concat(rules, "\n")
 end
 
--- on_after_commit is now write_json, which is a more standard way for TextValue
+-- This function is called by CBI when the form is submitted.
+-- It takes the string from the textarea, parses it, and writes the values back to UCI 'routing_rule' sections.
 function rules_option.write(self, section, value)
-    -- First, clear all old routing_rule sections
+    -- First, clear all old routing_rule sections to ensure a clean slate.
     while uci:get("network_switcher", uci:get_first("network_switcher", "routing_rule")) do
         uci:delete("network_switcher", uci:get_first("network_switcher", "routing_rule"))
     end
 
-    -- Parse each line from the textarea value and create new sections
+    -- Parse each line from the textarea and create new UCI sections.
     local rule_index = 0
     for line in (value .. "\n"):gmatch("(.-)\n") do
         line = line:gsub("^%s+", ""):gsub("%s+$", "")
@@ -69,15 +70,15 @@ function rules_option.write(self, section, value)
             end
         end
     end
-    -- We don't need to call uci:save/commit here, CBI handles it
 end
 
+-- This hook is executed after all data from the form has been written to UCI.
 function m.on_after_commit(self)
-    -- Need to commit the changes made in rules_option.write
+    -- Explicitly save and commit the changes to the 'network_switcher' config file.
     uci:save("network_switcher")
     uci:commit("network_switcher")
 
-    -- Reload service asynchronously
+    -- Asynchronously restart the service to apply the new rules without blocking the UI.
     fs.write("/tmp/network_switcher_restart.sh", "#!/bin/sh\n/etc/init.d/network_switcher policy-routing\n")
     sys.call("chmod +x /tmp/network_switcher_restart.sh")
     sys.call("/tmp/network_switcher_restart.sh >/dev/null 2>&1 &")
